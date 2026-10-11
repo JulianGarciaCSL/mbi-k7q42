@@ -472,11 +472,13 @@ textarea.notas{width:100%;border:0;border-radius:14px;padding:12px;min-height:70
 .top{padding-top:env(safe-area-inset-top)}
 .splash,.ingreso{padding-top:max(24px,env(safe-area-inset-top))}
 .aviso-version{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));z-index:400;background:var(--cy);color:#fff;font-weight:800;font-size:13px;padding:12px 18px;border-radius:99px;box-shadow:0 10px 30px rgba(26,182,240,.4);white-space:nowrap}
+
+.splash.espera *,.splash.espera{animation-play-state:paused!important}
 </style>
 </head>
 <body>
 <div id="app"></div>
-<script>window.APP_VERSION='v0.1';</script>
+<script>window.APP_VERSION='v0.1.1';</script>
 <script>/* App instalada (PWA): los datos viven en este dispositivo (IndexedDB). Se leen antes de arrancar la app
    y se guardan unos instantes después de cada cambio (y al pasar a segundo plano). */
 (function () {
@@ -739,18 +741,20 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
   };
   const pt = a => a.join(' ');
   const skel = P => ['M' + pt(P.N) + ' L' + pt(P.H), 'M' + pt(P.S) + ' L' + pt(P.be) + ' L' + pt(P.bh), 'M' + pt(P.S) + ' L' + pt(P.fe) + ' L' + pt(P.fh), 'M' + pt(P.H) + ' L' + pt(P.fk) + ' L' + pt(P.ff), 'M' + pt(P.H) + ' L' + pt(P.bk) + ' L' + pt(P.bf)];
+  /* línea de tiempo del corredor (segundos) y curva de cada tramo */
+  const T = [0, .3, .55, .8, .95, 1.25, 1.55, 1.75, 2.15];
   const SEC = ['parado', 'parado', 'medio', 'agachado', 'agachado', 'corre', 'toca', 'toca', 'corre'];
-  const SMIL = vals => `dur="2.15s" begin="0s" fill="freeze" calcMode="spline" keyTimes="0.000;0.140;0.256;0.372;0.442;0.581;0.721;0.814;1.000" keySplines="0 0 1 1;.45 0 .6 1;.3 0 .5 1;0 0 1 1;.25 .6 .3 1;.45 0 .4 1;0 0 1 1;.45 0 .4 1" values="${vals.join(';')}"`;
-  const animD = i => `<animate attributeName="d" ${SMIL(SEC.map(k => skel(POSES[k])[i]))}/>`;
-  const animC = j => `<animate attributeName="c${'xy'[j]}" ${SMIL(SEC.map(k => POSES[k].C[j]))}/>`;
+  const CURVA = [[0, 0, 1, 1], [.45, 0, .6, 1], [.3, 0, .5, 1], [0, 0, 1, 1], [.25, .6, .3, 1], [.45, 0, .4, 1], [0, 0, 1, 1], [.45, 0, .4, 1]];
+  const CONO = 'M-28 9 C-20 0 -8 -14 0 -14 C8 -14 20 0 28 9 C28 11 14 12 0 12 C-14 12 -28 11 -28 9 Z';
+  const BOLA = 'M-17 0 C-17 -9.4 -9.4 -17 0 -17 C9.4 -17 17 -9.4 17 0 C17 9.4 9.4 17 0 17 C-9.4 17 -17 9.4 -17 0 Z';
 
   /* logo completo. o.fg = color de línea, o.bg = color de fondo, o.anim = agrega ids/clases para animar, o.texto = incluir el texto */
   M.logo = function (o) {
     o = Object.assign({ fg: '#fff', bg: '#1D1E22', anim: false, texto: true, ancho: '100%', pref: 'lg' }, o);
     const W = 34, w = 26, L = 4.5, f = o.fg, b = o.bg;
     const cls = n => o.anim ? ` class="lg-${n}"` : '';
-    const ar = o.anim && !o.solo, AD = i => ar ? animD(i) : '';
-    const runner = `<g${cls('runner')}><g fill="none" stroke-linecap="round" stroke-linejoin="round">${runnerSkel.map((d, i) => `<path d="${d}" stroke="${f}" stroke-width="${W}">${AD(i)}</path>`).join('')}${runnerSkel.map((d, i) => `<path d="${d}" stroke="${b}" stroke-width="${w}">${AD(i)}</path>`).join('')}</g><circle cx="292" cy="152" r="30" fill="${b}" stroke="${f}" stroke-width="${L}">${ar ? animC(0) + animC(1) : ''}</circle></g>`;
+    const ar = o.anim && !o.solo, P0 = ar ? skel(POSES.parado) : runnerSkel, C0 = ar ? POSES.parado.C : [292, 152];
+    const runner = `<g${cls('runner')}><g fill="none" stroke-linecap="round" stroke-linejoin="round">${P0.map((d, i) => `<path class="lg-hueso" data-i="${i}" d="${d}" stroke="${f}" stroke-width="${W}"/>`).join('')}${P0.map((d, i) => `<path class="lg-hueso" data-i="${i}" d="${d}" stroke="${b}" stroke-width="${w}"/>`).join('')}</g><circle class="lg-cabeza" cx="${C0[0]}" cy="${C0[1]}" r="30" fill="${b}" stroke="${f}" stroke-width="${L}"/></g>`;
     const brain = `<g${cls('brain')}><g fill="${b}" stroke="${f}" stroke-width="${L}" stroke-linecap="round" stroke-linejoin="round"><path d="${cerebroIzq}"/><path d="${cerebroIzq}" transform="translate(1056 0) scale(-1 1)"/></g><g fill="none" stroke="${f}" stroke-width="${L}" stroke-linecap="round">${cerebroPliegues.map(d => `<path d="${d}"/><path d="${d}" transform="translate(1056 0) scale(-1 1)"/>`).join('')}<path d="M528 142 L528 382"/></g>${o.anim ? `<g class="lg-chispas" stroke="#1AB6F0" stroke-width="6" stroke-linecap="round">${[[528, 108, 528, 84], [612, 130, 630, 112], [444, 130, 426, 112], [660, 210, 684, 204], [396, 210, 372, 204]].map(([a, c, d, e]) => `<line x1="${a}" y1="${c}" x2="${d}" y2="${e}"/>`).join('')}</g>` : ''}</g>`;
     const arm = `<g${cls('arm')}><path d="${brazo}" fill="${b}" stroke="${f}" stroke-width="${L}" stroke-linejoin="round"/><path d="M812 196 C806 190 806 180 812 174" fill="none" stroke="${f}" stroke-width="${L}" stroke-linecap="round"/></g>`;
     const plate = `<g${cls('plate')}><circle cx="1057" cy="258" r="122" fill="none" stroke="${f}" stroke-width="${L}"/><circle cx="1057" cy="258" r="102" fill="none" stroke="${f}" stroke-width="${L}"/></g>`;
@@ -758,7 +762,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     const texto = o.texto ? `<g font-family="Archivo, 'Archivo Expanded', sans-serif" font-weight="900" style="font-stretch:125%" fill="${f}">${o.anim ? `<clipPath id="${o.pref}-c1"><rect class="lg-r1" x="120" y="420" width="1040" height="140"/></clipPath><clipPath id="${o.pref}-c2"><rect class="lg-r2" x="120" y="560" width="1040" height="140"/></clipPath>` : ''}<text x="126" y="545" font-size="158" textLength="1018" lengthAdjust="spacingAndGlyphs" ${o.anim ? `clip-path="url(#${o.pref}-c1)"` : ''}>MADEBE</text><text x="126" y="665" font-size="158" textLength="1018" lengthAdjust="spacingAndGlyphs" ${o.anim ? `clip-path="url(#${o.pref}-c2)"` : ''}>INTEGRAL</text></g>` : '';
     const vb = o.texto ? '96 84 1104 600' : '96 84 1104 330';
     const aire = o.anim && !o.solo ? `<defs><radialGradient id="${o.pref}-aire"><stop offset="0" stop-color="#1AB6F0" stop-opacity=".9"/><stop offset=".55" stop-color="#1AB6F0" stop-opacity=".35"/><stop offset="1" stop-color="#1AB6F0" stop-opacity="0"/></radialGradient></defs><ellipse class="lg-aire" cx="648" cy="384" rx="540" ry="290" fill="url(#${o.pref}-aire)"/>` : '';
-    const bola = o.anim && !o.solo ? '<g class="lg-bola"><path d="M-28 9 C-20 0 -8 -14 0 -14 C8 -14 20 0 28 9 C28 11 14 12 0 12 C-14 12 -28 11 -28 9 Z" fill="#1AB6F0"><animate attributeName="d" begin="1.75s" dur=".55s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines=".4 0 .3 1" values="M-28 9 C-20 0 -8 -14 0 -14 C8 -14 20 0 28 9 C28 11 14 12 0 12 C-14 12 -28 11 -28 9 Z;M-17 0 C-17 -9.4 -9.4 -17 0 -17 C9.4 -17 17 -9.4 17 0 C17 9.4 9.4 17 0 17 C-9.4 17 -17 9.4 -17 0 Z"/></path><g class="lg-cono"><path d="M-24 6 C-14 9 14 9 24 6" fill="none" stroke="#0B7FAE" stroke-width="3" stroke-linecap="round"/><ellipse cx="0" cy="-11" rx="4.5" ry="2" fill="#0B7FAE"/><animate attributeName="opacity" begin="1.75s" dur=".3s" fill="freeze" values="1;0"/></g></g>' : '';
+    const bola = o.anim && !o.solo ? `<g class="lg-bola"><path class="lg-forma" d="${CONO}" fill="#1AB6F0"/><g class="lg-cono"><path d="M-24 6 C-14 9 14 9 24 6" fill="none" stroke="#0B7FAE" stroke-width="3" stroke-linecap="round"/><ellipse cx="0" cy="-11" rx="4.5" ry="2" fill="#0B7FAE"/></g></g>` : '';
     const partes = o.solo ? { corredor: runner, cerebro: brain, brazo: arm, plato: plate + apple }[o.solo] : aire + runner + brain + arm + plate + apple + texto + bola;
     return `<svg class="logo-svg${o.anim ? ' animado' : ''}" viewBox="${vb}" width="${o.ancho}" role="img" aria-label="MADEBE INTEGRAL" xmlns="http://www.w3.org/2000/svg">${partes}</svg>`;
   };
@@ -769,6 +773,40 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     const caja = { corredor: '110 104 270 300', cerebro: '384 104 288 300', brazo: '694 100 214 300', plato: '922 122 270 270' }[nombre];
     const svg = M.logo({ fg: o.fg, bg: o.bg, texto: false, solo: nombre });
     return svg.replace(/viewBox="[^"]*"/, `viewBox="${caja}"`).replace('width="100%"', `width="${o.tam}" height="${o.tam}"`).replace('role="img" aria-label="MADEBE INTEGRAL"', 'aria-hidden="true"');
+  };
+  /* ---------- animación de entrada con UN solo reloj ----------
+     El recorrido del cono es una animación CSS (lgBola). Las poses del corredor y el morph cono → pelota se calculan
+     cada cuadro a partir del tiempo de esa misma animación, así nunca se desfasan (en iPhone el reloj SMIL del SVG
+     arrancaba antes que el CSS y el cono parecía volar solo). */
+  const bez = ([x1, y1, x2, y2], x) => { // curva cubic-bezier como en CSS
+    if (x <= 0) return 0; if (x >= 1) return 1;
+    const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+    let lo = 0, hi = 1, t = x; for (let i = 0; i < 30; i++) { const v = ((ax * t + bx) * t + cx) * t; if (Math.abs(v - x) < 1e-5) break; if (v < x) lo = t; else hi = t; t = (lo + hi) / 2; }
+    return ((ay * t + by) * t + cy) * t;
+  };
+  const mezcla = (a, b, k) => a + (b - a) * k;
+  const nums = s => s.match(/-?\d+(\.\d+)?/g).map(Number), plantilla = s => s.split(/-?\d+(?:\.\d+)?/);
+  const CONO_N = nums(CONO), BOLA_N = nums(BOLA), FORMA = plantilla(CONO);
+  M.poseEn = function (t) { // pose del corredor en el segundo t
+    let i = T.length - 2; for (let j = 0; j < T.length - 1; j++) if (t < T[j + 1]) { i = j; break; }
+    if (t <= 0) i = 0;
+    const k = t >= T[T.length - 1] ? 1 : bez(CURVA[i], Math.max(0, Math.min(1, (t - T[i]) / (T[i + 1] - T[i])))), A = POSES[SEC[i]], B = POSES[SEC[t >= T[T.length - 1] ? T.length - 1 : i + 1]];
+    const P = {}; Object.keys(A).forEach(n => P[n] = [mezcla(A[n][0], B[n][0], k), mezcla(A[n][1], B[n][1], k)].map(v => Math.round(v * 10) / 10));
+    return P;
+  };
+  M.formaEn = t => { const k = bez([.4, 0, .3, 1], Math.max(0, Math.min(1, (t - 1.75) / .55))); return FORMA.map((p, i) => i < CONO_N.length ? p + Math.round(mezcla(CONO_N[i], BOLA_N[i], k) * 10) / 10 : p).join(''); };
+  M.animarEntrada = function (svg, reloj) {
+    const huesos = [...svg.querySelectorAll('.lg-hueso')], cab = svg.querySelector('.lg-cabeza'), forma = svg.querySelector('.lg-forma'), cono = svg.querySelector('.lg-cono');
+    let vivo = true;
+    const pintar = t => {
+      const P = M.poseEn(t), sk = skel(P);
+      huesos.forEach(h => h.setAttribute('d', sk[+h.dataset.i])); cab.setAttribute('cx', P.C[0]); cab.setAttribute('cy', P.C[1]);
+      if (forma) forma.setAttribute('d', M.formaEn(t));
+      if (cono) cono.setAttribute('opacity', Math.max(0, Math.min(1, 1 - (t - 1.75) / .3)));
+    };
+    const cuadro = () => { if (!vivo) return; const t = reloj(); pintar(t); if (t < 2.4) requestAnimationFrame(cuadro); else vivo = false; };
+    pintar(0); requestAnimationFrame(cuadro);
+    return { fin() { vivo = false; pintar(9); } };
   };
   window.MARCA = M;
 })();
@@ -1665,9 +1703,22 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
       app.innerHTML = `<div class="splash" id="splash"><button class="saltar" id="spSaltar">Saltar</button><div class="logo-wrap">${MARCA.logo({ anim: true })}</div>
         <div class="acciones-sp"><button class="btn-ing" id="btnIngresar">INGRESAR</button></div>${firma('pie')}</div>`;
       const sp = $('#splash'), listo = () => sp.classList.add('listo');
-      const svgSp = sp.querySelector('svg'), finSmil = () => { try { svgSp.setCurrentTime(30); } catch (e) { } };
-      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) finSmil();
-      timerSplash = setTimeout(listo, 4600);
+      /* un solo reloj: el corredor y el cono siguen el tiempo de la animación CSS del recorrido (lgBola),
+         que arranca recién con la pantalla pintada y las fuentes listas */
+      const svgSp = sp.querySelector('svg'), bolaSp = svgSp.querySelector('.lg-bola');
+      let t0 = null; const animBola = () => bolaSp && bolaSp.getAnimations ? bolaSp.getAnimations().find(a => a.animationName === 'lgBola') : null;
+      const reloj = () => { const a = animBola(); if (a && a.currentTime !== null) return a.currentTime / 1000; return t0 === null ? 0 : (performance.now() - t0) / 1000; };
+      sp.classList.add('espera');
+      const corredor = MARCA.animarEntrada(svgSp, reloj);
+      const finSmil = () => { corredor.fin(); sp.classList.remove('espera'); };
+      const arrancar = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (sp.classList.contains('fin') || !document.body.contains(sp)) return;
+        (sp.getAnimations ? sp.getAnimations({ subtree: true }) : []).forEach(a => { try { a.currentTime = 0; } catch (e) { } });
+        sp.classList.remove('espera'); t0 = performance.now();
+        clearTimeout(timerSplash); timerSplash = setTimeout(listo, 4600);
+      }));
+      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) { finSmil(); listo(); }
+      else Promise.race([document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve(), new Promise(r => setTimeout(r, 1500))]).then(arrancar);
       sp.addEventListener('click', e => { if (e.target.closest('#btnIngresar')) { if (S.yo && C.usr[S.yo]) { pasoIng = 'tipo'; render(); } else { pasoIng = 'tipo'; vistaLogin(); } return; } if (!sp.classList.contains('listo')) { sp.classList.add('fin'); finSmil(); listo(); } });
       return;
     }
