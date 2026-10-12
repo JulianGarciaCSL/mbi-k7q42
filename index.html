@@ -474,15 +474,28 @@ textarea.notas{width:100%;border:0;border-radius:14px;padding:12px;min-height:70
 .aviso-version{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));z-index:400;background:var(--cy);color:#fff;font-weight:800;font-size:13px;padding:12px 18px;border-radius:99px;box-shadow:0 10px 30px rgba(26,182,240,.4);white-space:nowrap}
 
 .splash.espera *,.splash.espera{animation-play-state:paused!important}
+
+/* v0.2 GitHub y acceso de alumnos */
+.clave-rec{font-family:"Archivo",monospace;font-stretch:100%;font-weight:800;font-size:16px;letter-spacing:.5px;white-space:nowrap;text-align:center;background:#1E2125;color:#fff;border-radius:14px;padding:16px 10px;margin:0 0 10px;word-break:break-all;user-select:all;-webkit-user-select:all}
+.qr-box{background:#fff;border-radius:16px;padding:14px;width:240px;max-width:80%;margin:4px auto 0;box-shadow:0 1px 3px rgba(0,0,0,.08)}.qr-box svg{display:block;width:100%;height:auto}
+.sp-msg{margin-top:12px;text-align:center;color:#FFC7A8;font-size:12px;min-height:16px}
+.sync.girando b{animation:girar 1s linear infinite}@keyframes girar{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 <div id="app"></div>
-<script>window.APP_VERSION='v0.1.2';</script>
+<script>window.APP_VERSION='v0.2';</script>
 <script>/* App instalada (PWA): los datos viven en este dispositivo (IndexedDB). Se leen antes de arrancar la app
    y se guardan unos instantes después de cada cambio (y al pasar a segundo plano). */
 (function () {
   window.APP_MODO = 'local';
+  /* link de acceso de alumno (#a=…): al "Agregar a inicio" el ícono abre con ese mismo link, así la app instalada también recibe la clave */
+  try {
+    if (/[#&]a=[A-Za-z0-9_-]{8,20}\.[A-Za-z0-9_-]{40,50}/.test(location.hash)) {
+      var base = location.href.split('#')[0].replace(/index\.html$/, ''), man = { name: 'MADEBE Integral', short_name: 'MADEBE', start_url: location.href, scope: base, display: 'standalone', background_color: '#1D1E22', theme_color: '#12161C', icons: [{ src: base + 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: base + 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }] };
+      var l = document.querySelector('link[rel="manifest"]'); if (l) l.setAttribute('href', 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(man)));
+    }
+  } catch (e) { }
   var NOMBRE = 'madebe-integral', TABLA = 'datos', CLAVE = 'estado', dbp = null, pendiente = null, timer = null, esperando = [];
   function abrir() {
     if (dbp) return dbp;
@@ -1056,7 +1069,19 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
       guardarLocal(DB.local); res();
     }, 900));
   };
-  DB.reiniciarDemo = function () { const ult = DB.local.meta.ultimaCopia; DB.local = vacio(); if (ult) DB.local.meta.ultimaCopia = ult; const p = guardarLocal(DB.local); DB.cargar(); return p; };
+  /* marca todo como enviado (la nube lo llama después de subir a GitHub) */
+  DB.marcarEnviado = function () {
+    COLS.forEach(c => DB.local[c].forEach(x => x.sync = 'ok'));
+    ['ses', 'cla', 'asi', 'log'].forEach(c => DB[c].forEach(x => { if (x.sync === 'pend') x.sync = 'ok'; }));
+    const d = new Date(); DB.ultimaSync = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    return guardarLocal(DB.local);
+  };
+  /* copia de DB.local sin secretos del dispositivo (token de GitHub y clave de recuperación) */
+  DB.limpio = function () { const o = Object.assign({}, DB.local), m = Object.assign({}, o.meta); delete m.github; delete m.nube; delete m.alumno; o.meta = m; return o; };
+  /* reemplaza todo lo local (restaurar desde GitHub o datos del alumno) conservando lo que se indique de meta */
+  DB.reemplazar = function (datos, metaExtra) { DB.local = normal(JSON.parse(JSON.stringify(datos))); Object.assign(DB.local.meta, metaExtra || {}); const p = guardarLocal(DB.local); DB.cargar(); return p; };
+  DB.guardarMeta = () => guardarLocal(DB.local);
+  DB.reiniciarDemo = function () { const ult = DB.local.meta.ultimaCopia, gh = DB.local.meta.github; DB.local = vacio(); if (ult) DB.local.meta.ultimaCopia = ult; if (gh) DB.local.meta.github = gh; const p = guardarLocal(DB.local); DB.cargar(); return p; };
   /* empezar con alumnos reales: quita los alumnos de prueba, su historia y sus niveles; quedan ejercicios, rutinas y clases (sin alumnos) */
   DB.quitarDemo = function (actor) {
     const demo = new Set(BASE.USR.filter(u => u.rol === 'alumno').map(u => u.usuario));
@@ -1074,10 +1099,10 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     DB.registrar(actor, 'datos', { txt: 'Se quitaron los alumnos y la historia de prueba' }); DB.guardar(); return p;
   };
   /* copia de seguridad: todo lo cargado en este dispositivo en un archivo JSON */
-  DB.copia = () => ({ app: 'madebe-integral', formato: 1, version: window.APP_VERSION, fecha: new Date().toISOString(), datos: DB.local });
+  DB.copia = () => ({ app: 'madebe-integral', formato: 1, version: window.APP_VERSION, fecha: new Date().toISOString(), datos: DB.limpio() });
   DB.marcarCopia = () => { DB.local.meta.ultimaCopia = new Date().toISOString(); return guardarLocal(DB.local); };
   DB.validarCopia = o => !!(o && o.app === 'madebe-integral' && o.datos && typeof o.datos === 'object' && COLS.every(c => o.datos[c] === undefined || Array.isArray(o.datos[c])));
-  DB.restaurar = function (o) { const ult = new Date().toISOString(); DB.local = normal(o.datos); DB.local.meta.ultimaCopia = DB.local.meta.ultimaCopia || ult; DB.local.meta.restaurada = ult; return guardarLocal(DB.local); };
+  DB.restaurar = function (o) { const ult = new Date().toISOString(), gh = DB.local.meta.github, nb = DB.local.meta.nube; DB.local = normal(o.datos); if (gh) { DB.local.meta.github = gh; DB.local.meta.nube = nb; } DB.local.meta.ultimaCopia = DB.local.meta.ultimaCopia || ult; DB.local.meta.restaurada = ult; return guardarLocal(DB.local); };
   DB.diasSinCopia = () => { const u = DB.local.meta.ultimaCopia || DB.local.meta.instalada; return u ? Math.floor((Date.now() - new Date(u)) / 864e5) : 0; };
   DB.cambiosDesdeCopia = () => { const u = DB.local.meta.ultimaCopia || ''; return COLS.reduce((a, c) => a + DB.local[c].filter(x => (x.mod || '') > u).length, 0); };
 
@@ -1292,6 +1317,2482 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
   };
   window.DB = DB;
 })();
+
+/* ---- nube.js ---- */
+/* ===== Nube (v0.2): GitHub como reservorio cifrado =====
+   - El celular del profesor es el único que escribe: guarda el token fine-grained (solo ese repo, Contents: Read and write).
+   - datos/p.bin   → todo lo del profesor, cifrado con su CLAVE DE RECUPERACIÓN (PBKDF2 + AES-256-GCM).
+   - datos/a/<id>.bin → la vista de cada alumno (solo lo suyo), cifrada con una clave al azar que viaja en su link/QR.
+   - Los alumnos leen su archivo desde GitHub Pages (mismo sitio de la app): no necesitan token.
+   - Cada envío es UN commit con todos los archivos que cambiaron (Git Data API). */
+(function () {
+  const DB = window.DB, C = window.CATALOGO, U = window.U;
+  const N = { estado: 'off', error: '', enviando: false };
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const b64 = buf => { const a = new Uint8Array(buf); let s = ''; for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s); };
+  const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const b64url = buf => b64(buf).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64url = s => unb64(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+  N.azar = n => crypto.getRandomValues(new Uint8Array(n));
+  N.idOpaco = () => b64url(N.azar(9));            // 12 caracteres: nombre del archivo del alumno
+  N.claveAlumno = () => b64url(N.azar(32));       // 256 bits: viaja en el link/QR
+  const ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  N.claveRecuperacion = () => { const a = N.azar(24); let s = ''; for (let i = 0; i < 24; i++) { s += ABC[a[i] % 32]; if (i % 4 === 3 && i < 23) s += '-'; } return s; }; // 120 bits
+  N.normalizarClave = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const claveRaw = k => crypto.subtle.importKey('raw', unb64url(k), 'AES-GCM', false, ['encrypt', 'decrypt']);
+  const clavePass = async (pass, salt) => crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' }, await crypto.subtle.importKey('raw', enc.encode(N.normalizarClave(pass)), 'PBKDF2', false, ['deriveKey']), { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  N.cifrar = async (obj, clave) => {
+    const iv = N.azar(12), salt = clave.pass ? N.azar(16) : null;
+    const key = clave.pass ? await clavePass(clave.pass, salt) : await claveRaw(clave.raw);
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj)));
+    return JSON.stringify({ app: 'madebe', v: 1, kdf: clave.pass ? 'pbkdf2-sha256-200k' : 'raw', salt: salt ? b64(salt) : undefined, iv: b64(iv), ct: b64(ct) });
+  };
+  N.descifrar = async (txt, clave) => {
+    let o; try { o = JSON.parse(txt); } catch (e) { throw Object.assign(new Error('El archivo no es de MADEBE'), { tipo: 'formato' }); }
+    if (!o || o.app !== 'madebe') throw Object.assign(new Error('El archivo no es de MADEBE'), { tipo: 'formato' });
+    const key = o.kdf === 'raw' ? await claveRaw(clave.raw) : await clavePass(clave.pass, unb64(o.salt));
+    try { return JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(o.iv) }, key, unb64(o.ct)))); }
+    catch (e) { throw Object.assign(new Error('Clave incorrecta'), { tipo: 'clave' }); }
+  };
+  N.hash = async s => b64url(await crypto.subtle.digest('SHA-256', enc.encode(s))).slice(0, 22);
+  const estable = o => JSON.stringify(o, (k, v) => k === 'sync' || k === 'subido' ? undefined : v); // lo que no cambia el contenido no fuerza un envío
+
+  /* ---------- GitHub ---------- */
+  const API = 'https://api.github.com';
+  const cfg = () => DB.local.meta.github || null;
+  N.conectado = () => !!(cfg() && cfg().token && cfg().clave);
+  N.esAlumno = () => !!DB.local.meta.alumno;
+  N.repoDesdeUrl = () => { const m = location.hostname.match(/^([^.]+)\.github\.io$/i), r = location.pathname.split('/').filter(Boolean)[0]; return m && r ? m[1] + '/' + r : ''; };
+  const gh = (c, ruta, opt) => {
+    opt = opt || {};
+    const h = { Accept: opt.raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json', Authorization: 'Bearer ' + c.token, 'X-GitHub-Api-Version': '2022-11-28' };
+    if (opt.body) h['Content-Type'] = 'application/json';
+    return fetch(API + ruta, { method: opt.method || 'GET', headers: h, body: opt.body ? JSON.stringify(opt.body) : undefined, cache: 'no-store' }).then(async r => {
+      if (!r.ok) { const e = new Error('GitHub ' + r.status); e.status = r.status; try { e.msg = (await r.json()).message; } catch (x) { } throw e; }
+      if (r.status === 204) return null; return opt.raw ? r.text() : r.json();
+    });
+  };
+  const rep = c => `/repos/${c.owner}/${c.repo}`;
+  N.mensajeError = e => !e ? '' : e.status === 401 ? 'GitHub rechazó el token (vencido o mal copiado)' : e.status === 403 ? 'El token no tiene permiso de escritura en ese repositorio (Contents: Read and write)' : e.status === 404 ? 'No se encontró el repositorio (o el token no tiene acceso a él)' : e.status === 409 || e.status === 422 ? 'GitHub rechazó el envío; se reintenta' : e.tipo === 'clave' ? 'La clave de recuperación no es correcta' : e.status ? 'GitHub respondió ' + e.status + (e.msg ? ': ' + e.msg : '') : 'Sin conexión a internet';
+  /* probar token y repo */
+  N.probar = async function (owner, repo, token) {
+    const c = { owner, repo, token };
+    const r = await gh(c, rep(c));
+    if (!r.permissions || !r.permissions.push) throw Object.assign(new Error('sin permiso'), { status: 403 });
+    let existe = false;
+    try { await gh(c, rep(c) + '/contents/datos/p.bin?ref=' + encodeURIComponent(r.default_branch), { raw: true }); existe = true; } catch (e) { if (e.status !== 404) throw e; }
+    return { branch: r.default_branch, publico: !r.private, existe };
+  };
+  /* un commit con varios archivos: {ruta: contenido | null para borrar} */
+  N.commit = async function (c, archivos, mensaje) {
+    const ref = await gh(c, rep(c) + '/git/ref/heads/' + c.branch), base = ref.object.sha;
+    const com = await gh(c, rep(c) + '/git/commits/' + base);
+    const arbol = Object.entries(archivos).map(([path, content]) => content === null ? { path, mode: '100644', type: 'blob', sha: null } : { path, mode: '100644', type: 'blob', content });
+    const t = await gh(c, rep(c) + '/git/trees', { method: 'POST', body: { base_tree: com.tree.sha, tree: arbol } });
+    if (t.sha === com.tree.sha) return null;
+    const nc = await gh(c, rep(c) + '/git/commits', { method: 'POST', body: { message: mensaje, tree: t.sha, parents: [base] } });
+    await gh(c, rep(c) + '/git/refs/heads/' + c.branch, { method: 'PATCH', body: { sha: nc.sha } });
+    return nc.sha;
+  };
+
+  /* ---------- qué ve cada alumno ---------- */
+  N.vistaAlumno = function (u) {
+    const L = DB.local, de = x => x.u === u, prof = C.USUARIOS.find(x => x.rol === 'profesor' && x.activo);
+    return {
+      usuario: u, profesor: prof ? prof.nombre : '',
+      datos: {
+        meta: { ref: L.meta.ref, sinDemo: L.meta.sinDemo, sinDemoDesde: L.meta.sinDemoDesde, instalada: L.meta.instalada },
+        usr: L.usr.filter(x => x.usuario === u || x.bor || (C.usr[x.usuario] && C.usr[x.usuario].rol !== 'alumno')),
+        grp: L.grp.map(g => Object.assign({}, g, { alumnos: (g.alumnos || []).filter(a => a === u) })),
+        seq: L.seq, rut: L.rut, ejn: L.ejn, ejv: L.ejv, cla: L.cla,
+        ses: L.ses.filter(de), ser: L.ser.filter(de), asi: L.asi.filter(de), niv: L.niv.filter(de), log: L.log.filter(de), pts: []
+      }
+    };
+  };
+  N.accesos = () => DB.local.meta.accesos || (DB.local.meta.accesos = {});
+  N.linkAlumno = a => location.origin + location.pathname.replace(/index\.html$/, '') + '#a=' + a.id + '.' + a.k;
+  N.crearAcceso = function (u) {
+    const acc = N.accesos(), ant = acc[u], nb = DB.local.meta.nube || (DB.local.meta.nube = {});
+    if (ant) { (nb.borrar = nb.borrar || []).push('datos/a/' + ant.id + '.bin'); if (nb.hashes) delete nb.hashes[u]; }
+    acc[u] = { id: N.idOpaco(), k: N.claveAlumno(), creado: ant ? ant.creado : new Date().toISOString(), renovado: ant ? new Date().toISOString() : '', subido: '' };
+    DB.registrar(window.S_YO ? window.S_YO() : '', 'acceso', { u, txt: ant ? 'Acceso del alumno renovado: el link/QR anterior deja de funcionar' : 'Acceso del alumno generado' });
+    DB.guardar(); N.programar(800); return acc[u];
+  };
+  N.quitarAcceso = function (u) {
+    const acc = N.accesos(), a = acc[u]; if (!a) return;
+    const nb = DB.local.meta.nube || (DB.local.meta.nube = {}); (nb.borrar = nb.borrar || []).push('datos/a/' + a.id + '.bin'); if (nb.hashes) delete nb.hashes[u];
+    delete acc[u]; DB.guardar(); N.programar(800);
+  };
+
+  /* ---------- envío (profesor) ---------- */
+  let timer = null, otraVez = false;
+  N.pendientes = () => DB.pendientes() + Object.values(N.accesos()).filter(a => !a.subido).length + ((DB.local.meta.nube || {}).borrar || []).length;
+  N.programar = function (ms) {
+    if (!N.conectado() || N.esAlumno()) return;
+    // automático: espera 2 min sin cambios y nunca más de un envío cada 6 min (GitHub Pages publica hasta ~10 veces por hora)
+    if (ms === undefined) { const u = Date.parse((DB.local.meta.nube || {}).ultima || 0) || 0; ms = Math.max(120000, 360000 - (Date.now() - u)); }
+    clearTimeout(timer); timer = setTimeout(() => N.enviar().catch(() => { }), ms);
+    N.avisar();
+  };
+  const oyentes = []; N.alCambiar = f => oyentes.push(f); N.avisar = () => oyentes.forEach(f => { try { f(); } catch (e) { } });
+  N.enviar = async function () {
+    if (!N.conectado() || N.esAlumno()) return;
+    if (N.enviando) { otraVez = true; return; }
+    clearTimeout(timer); N.enviando = true; N.estado = 'enviando'; N.error = ''; N.avisar();
+    try {
+      const c = cfg(), nb = DB.local.meta.nube || (DB.local.meta.nube = {}), hashes = Object.assign({}, nb.hashes || {}), archivos = {}, acc = N.accesos();
+      const prof = DB.limpio(), hp = await N.hash(estable(prof));
+      if (hp !== hashes.__p) { archivos['datos/p.bin'] = await N.cifrar({ formato: 1, version: window.APP_VERSION, generado: new Date().toISOString(), datos: prof }, { pass: c.clave }); hashes.__p = hp; }
+      for (const u of Object.keys(acc)) {
+        if (!C.usr[u] || !C.usr[u].activo) { N.quitarAcceso(u); continue; }
+        const v = N.vistaAlumno(u), h = await N.hash(estable(v));
+        if (h !== hashes[u] || !acc[u].subido) { archivos['datos/a/' + acc[u].id + '.bin'] = await N.cifrar(Object.assign({ formato: 1, version: window.APP_VERSION, generado: new Date().toISOString() }, v), { raw: acc[u].k }); hashes[u] = h; }
+      }
+      const borrar = (nb.borrar || []).slice(); borrar.forEach(p => { if (!(p in archivos)) archivos[p] = null; });
+      if (Object.keys(archivos).length) {
+        const n = Object.keys(archivos).filter(p => p.startsWith('datos/a/') && archivos[p] !== null).length;
+        try { await N.commit(c, archivos, `MADEBE: datos al ${new Date().toISOString().slice(0, 16).replace('T', ' ')} (${n} alumno${n === 1 ? '' : 's'})`); }
+        catch (e) { // un archivo a borrar que ya no existe hace fallar el commit: se reintenta sin borrar
+          if ((e.status === 422 || e.status === 404) && borrar.length) { borrar.forEach(p => { if (archivos[p] === null) delete archivos[p]; }); if (Object.keys(archivos).length) await N.commit(c, archivos, 'MADEBE: datos'); }
+          else throw e;
+        }
+      }
+      const ahora = new Date().toISOString();
+      nb.hashes = hashes; nb.borrar = (nb.borrar || []).filter(p => !borrar.includes(p)); nb.ultima = ahora;
+      Object.values(acc).forEach(a => { if (!a.subido) a.subido = ahora; });
+      await DB.marcarEnviado(); N.estado = 'ok';
+    } catch (e) {
+      N.estado = 'error'; N.error = N.mensajeError(e); console.warn('Envío a GitHub', e);
+      clearTimeout(timer); timer = setTimeout(() => N.enviar().catch(() => { }), 60000);
+    } finally {
+      N.enviando = false; N.avisar();
+      if (otraVez) { otraVez = false; N.programar(1500); }
+    }
+  };
+  /* conectar el celular del profesor: si GitHub ya tiene datos, se recuperan con la clave de recuperación */
+  N.conectar = async function (owner, repo, token, clave, recuperar) {
+    const info = await N.probar(owner, repo, token);
+    const c = { owner, repo, token, branch: info.branch, clave };
+    if (recuperar) {
+      const txt = await gh(c, rep(c) + '/contents/datos/p.bin?ref=' + encodeURIComponent(c.branch), { raw: true });
+      const o = await N.descifrar(txt, { pass: clave });
+      await DB.reemplazar(o.datos, { github: c, nube: { ultima: o.generado, hashes: {} } });
+    } else { DB.local.meta.github = c; DB.local.meta.nube = { hashes: {} }; await DB.guardarMeta(); }
+    DB.registrar('', 'nube', { txt: recuperar ? 'Datos recuperados desde GitHub' : `Conectado con GitHub (${owner}/${repo})` });
+    N.estado = 'idle'; await N.enviar(); return info;
+  };
+  N.cambiarToken = async function (token) { const c = cfg(); await N.probar(c.owner, c.repo, token); c.token = token; await DB.guardarMeta(); N.estado = 'idle'; N.programar(1000); };
+  N.desconectar = function () { delete DB.local.meta.github; delete DB.local.meta.nube; N.estado = 'off'; clearTimeout(timer); DB.guardarMeta(); N.avisar(); };
+
+  /* ---------- alumno: descarga su archivo desde GitHub Pages ---------- */
+  N.leerFragmento = () => { const m = (location.hash || '').match(/[#&]a=([A-Za-z0-9_-]{8,20})\.([A-Za-z0-9_-]{40,50})/); return m ? { id: m[1], k: m[2] } : null; };
+  N.descargarAlumno = async function (acc) {
+    const r = await fetch('./datos/a/' + acc.id + '.bin?t=' + Date.now(), { cache: 'no-store' });
+    if (r.status === 404) throw Object.assign(new Error('Acceso no encontrado'), { tipo: 'sinacceso' });
+    if (!r.ok) throw Object.assign(new Error('Sin conexión'), { tipo: 'red' });
+    const v = await N.descifrar(await r.text(), { raw: acc.k });
+    await DB.reemplazar(v.datos, { alumno: { id: acc.id, k: acc.k, usuario: v.usuario, profesor: v.profesor, generado: v.generado, bajado: new Date().toISOString() } });
+    return v;
+  };
+  N.olvidarAcceso = () => DB.reemplazar({}, {});
+
+  /* al guardar o reindexar, el profesor conectado programa un envío (agrupa cambios 2 minutos) */
+  const indexar0 = DB.indexar; DB.indexar = function () { indexar0.apply(DB, arguments); if (N.conectado() && !N.esAlumno() && DB.pendientes()) N.programar(); };
+  window.addEventListener('online', () => { if (N.conectado() && N.pendientes()) N.programar(2000); });
+  if (N.conectado()) N.estado = 'idle';
+  window.NUBE = N;
+})();
+
+/* ---- lib/qrcode.js ---- */
+//---------------------------------------------------------------------
+//
+// QR Code Generator for JavaScript
+//
+// Copyright (c) 2009 Kazuhiko Arase
+//
+// URL: http://www.d-project.com/
+//
+// Licensed under the MIT license:
+//  http://www.opensource.org/licenses/mit-license.php
+//
+// The word 'QR Code' is registered trademark of
+// DENSO WAVE INCORPORATED
+//  http://www.denso-wave.com/qrcode/faqpatent-e.html
+//
+//---------------------------------------------------------------------
+
+var qrcode = function() {
+
+  //---------------------------------------------------------------------
+  // qrcode
+  //---------------------------------------------------------------------
+
+  /**
+   * qrcode
+   * @param typeNumber 1 to 40
+   * @param errorCorrectionLevel 'L','M','Q','H'
+   */
+  var qrcode = function(typeNumber, errorCorrectionLevel) {
+
+    var PAD0 = 0xEC;
+    var PAD1 = 0x11;
+
+    var _typeNumber = typeNumber;
+    var _errorCorrectionLevel = QRErrorCorrectionLevel[errorCorrectionLevel];
+    var _modules = null;
+    var _moduleCount = 0;
+    var _dataCache = null;
+    var _dataList = [];
+
+    var _this = {};
+
+    var makeImpl = function(test, maskPattern) {
+
+      _moduleCount = _typeNumber * 4 + 17;
+      _modules = function(moduleCount) {
+        var modules = new Array(moduleCount);
+        for (var row = 0; row < moduleCount; row += 1) {
+          modules[row] = new Array(moduleCount);
+          for (var col = 0; col < moduleCount; col += 1) {
+            modules[row][col] = null;
+          }
+        }
+        return modules;
+      }(_moduleCount);
+
+      setupPositionProbePattern(0, 0);
+      setupPositionProbePattern(_moduleCount - 7, 0);
+      setupPositionProbePattern(0, _moduleCount - 7);
+      setupPositionAdjustPattern();
+      setupTimingPattern();
+      setupTypeInfo(test, maskPattern);
+
+      if (_typeNumber >= 7) {
+        setupTypeNumber(test);
+      }
+
+      if (_dataCache == null) {
+        _dataCache = createData(_typeNumber, _errorCorrectionLevel, _dataList);
+      }
+
+      mapData(_dataCache, maskPattern);
+    };
+
+    var setupPositionProbePattern = function(row, col) {
+
+      for (var r = -1; r <= 7; r += 1) {
+
+        if (row + r <= -1 || _moduleCount <= row + r) continue;
+
+        for (var c = -1; c <= 7; c += 1) {
+
+          if (col + c <= -1 || _moduleCount <= col + c) continue;
+
+          if ( (0 <= r && r <= 6 && (c == 0 || c == 6) )
+              || (0 <= c && c <= 6 && (r == 0 || r == 6) )
+              || (2 <= r && r <= 4 && 2 <= c && c <= 4) ) {
+            _modules[row + r][col + c] = true;
+          } else {
+            _modules[row + r][col + c] = false;
+          }
+        }
+      }
+    };
+
+    var getBestMaskPattern = function() {
+
+      var minLostPoint = 0;
+      var pattern = 0;
+
+      for (var i = 0; i < 8; i += 1) {
+
+        makeImpl(true, i);
+
+        var lostPoint = QRUtil.getLostPoint(_this);
+
+        if (i == 0 || minLostPoint > lostPoint) {
+          minLostPoint = lostPoint;
+          pattern = i;
+        }
+      }
+
+      return pattern;
+    };
+
+    var setupTimingPattern = function() {
+
+      for (var r = 8; r < _moduleCount - 8; r += 1) {
+        if (_modules[r][6] != null) {
+          continue;
+        }
+        _modules[r][6] = (r % 2 == 0);
+      }
+
+      for (var c = 8; c < _moduleCount - 8; c += 1) {
+        if (_modules[6][c] != null) {
+          continue;
+        }
+        _modules[6][c] = (c % 2 == 0);
+      }
+    };
+
+    var setupPositionAdjustPattern = function() {
+
+      var pos = QRUtil.getPatternPosition(_typeNumber);
+
+      for (var i = 0; i < pos.length; i += 1) {
+
+        for (var j = 0; j < pos.length; j += 1) {
+
+          var row = pos[i];
+          var col = pos[j];
+
+          if (_modules[row][col] != null) {
+            continue;
+          }
+
+          for (var r = -2; r <= 2; r += 1) {
+
+            for (var c = -2; c <= 2; c += 1) {
+
+              if (r == -2 || r == 2 || c == -2 || c == 2
+                  || (r == 0 && c == 0) ) {
+                _modules[row + r][col + c] = true;
+              } else {
+                _modules[row + r][col + c] = false;
+              }
+            }
+          }
+        }
+      }
+    };
+
+    var setupTypeNumber = function(test) {
+
+      var bits = QRUtil.getBCHTypeNumber(_typeNumber);
+
+      for (var i = 0; i < 18; i += 1) {
+        var mod = (!test && ( (bits >> i) & 1) == 1);
+        _modules[Math.floor(i / 3)][i % 3 + _moduleCount - 8 - 3] = mod;
+      }
+
+      for (var i = 0; i < 18; i += 1) {
+        var mod = (!test && ( (bits >> i) & 1) == 1);
+        _modules[i % 3 + _moduleCount - 8 - 3][Math.floor(i / 3)] = mod;
+      }
+    };
+
+    var setupTypeInfo = function(test, maskPattern) {
+
+      var data = (_errorCorrectionLevel << 3) | maskPattern;
+      var bits = QRUtil.getBCHTypeInfo(data);
+
+      // vertical
+      for (var i = 0; i < 15; i += 1) {
+
+        var mod = (!test && ( (bits >> i) & 1) == 1);
+
+        if (i < 6) {
+          _modules[i][8] = mod;
+        } else if (i < 8) {
+          _modules[i + 1][8] = mod;
+        } else {
+          _modules[_moduleCount - 15 + i][8] = mod;
+        }
+      }
+
+      // horizontal
+      for (var i = 0; i < 15; i += 1) {
+
+        var mod = (!test && ( (bits >> i) & 1) == 1);
+
+        if (i < 8) {
+          _modules[8][_moduleCount - i - 1] = mod;
+        } else if (i < 9) {
+          _modules[8][15 - i - 1 + 1] = mod;
+        } else {
+          _modules[8][15 - i - 1] = mod;
+        }
+      }
+
+      // fixed module
+      _modules[_moduleCount - 8][8] = (!test);
+    };
+
+    var mapData = function(data, maskPattern) {
+
+      var inc = -1;
+      var row = _moduleCount - 1;
+      var bitIndex = 7;
+      var byteIndex = 0;
+      var maskFunc = QRUtil.getMaskFunction(maskPattern);
+
+      for (var col = _moduleCount - 1; col > 0; col -= 2) {
+
+        if (col == 6) col -= 1;
+
+        while (true) {
+
+          for (var c = 0; c < 2; c += 1) {
+
+            if (_modules[row][col - c] == null) {
+
+              var dark = false;
+
+              if (byteIndex < data.length) {
+                dark = ( ( (data[byteIndex] >>> bitIndex) & 1) == 1);
+              }
+
+              var mask = maskFunc(row, col - c);
+
+              if (mask) {
+                dark = !dark;
+              }
+
+              _modules[row][col - c] = dark;
+              bitIndex -= 1;
+
+              if (bitIndex == -1) {
+                byteIndex += 1;
+                bitIndex = 7;
+              }
+            }
+          }
+
+          row += inc;
+
+          if (row < 0 || _moduleCount <= row) {
+            row -= inc;
+            inc = -inc;
+            break;
+          }
+        }
+      }
+    };
+
+    var createBytes = function(buffer, rsBlocks) {
+
+      var offset = 0;
+
+      var maxDcCount = 0;
+      var maxEcCount = 0;
+
+      var dcdata = new Array(rsBlocks.length);
+      var ecdata = new Array(rsBlocks.length);
+
+      for (var r = 0; r < rsBlocks.length; r += 1) {
+
+        var dcCount = rsBlocks[r].dataCount;
+        var ecCount = rsBlocks[r].totalCount - dcCount;
+
+        maxDcCount = Math.max(maxDcCount, dcCount);
+        maxEcCount = Math.max(maxEcCount, ecCount);
+
+        dcdata[r] = new Array(dcCount);
+
+        for (var i = 0; i < dcdata[r].length; i += 1) {
+          dcdata[r][i] = 0xff & buffer.getBuffer()[i + offset];
+        }
+        offset += dcCount;
+
+        var rsPoly = QRUtil.getErrorCorrectPolynomial(ecCount);
+        var rawPoly = qrPolynomial(dcdata[r], rsPoly.getLength() - 1);
+
+        var modPoly = rawPoly.mod(rsPoly);
+        ecdata[r] = new Array(rsPoly.getLength() - 1);
+        for (var i = 0; i < ecdata[r].length; i += 1) {
+          var modIndex = i + modPoly.getLength() - ecdata[r].length;
+          ecdata[r][i] = (modIndex >= 0)? modPoly.getAt(modIndex) : 0;
+        }
+      }
+
+      var totalCodeCount = 0;
+      for (var i = 0; i < rsBlocks.length; i += 1) {
+        totalCodeCount += rsBlocks[i].totalCount;
+      }
+
+      var data = new Array(totalCodeCount);
+      var index = 0;
+
+      for (var i = 0; i < maxDcCount; i += 1) {
+        for (var r = 0; r < rsBlocks.length; r += 1) {
+          if (i < dcdata[r].length) {
+            data[index] = dcdata[r][i];
+            index += 1;
+          }
+        }
+      }
+
+      for (var i = 0; i < maxEcCount; i += 1) {
+        for (var r = 0; r < rsBlocks.length; r += 1) {
+          if (i < ecdata[r].length) {
+            data[index] = ecdata[r][i];
+            index += 1;
+          }
+        }
+      }
+
+      return data;
+    };
+
+    var createData = function(typeNumber, errorCorrectionLevel, dataList) {
+
+      var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, errorCorrectionLevel);
+
+      var buffer = qrBitBuffer();
+
+      for (var i = 0; i < dataList.length; i += 1) {
+        var data = dataList[i];
+        buffer.put(data.getMode(), 4);
+        buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber) );
+        data.write(buffer);
+      }
+
+      // calc num max data.
+      var totalDataCount = 0;
+      for (var i = 0; i < rsBlocks.length; i += 1) {
+        totalDataCount += rsBlocks[i].dataCount;
+      }
+
+      if (buffer.getLengthInBits() > totalDataCount * 8) {
+        throw 'code length overflow. ('
+          + buffer.getLengthInBits()
+          + '>'
+          + totalDataCount * 8
+          + ')';
+      }
+
+      // end code
+      if (buffer.getLengthInBits() + 4 <= totalDataCount * 8) {
+        buffer.put(0, 4);
+      }
+
+      // padding
+      while (buffer.getLengthInBits() % 8 != 0) {
+        buffer.putBit(false);
+      }
+
+      // padding
+      while (true) {
+
+        if (buffer.getLengthInBits() >= totalDataCount * 8) {
+          break;
+        }
+        buffer.put(PAD0, 8);
+
+        if (buffer.getLengthInBits() >= totalDataCount * 8) {
+          break;
+        }
+        buffer.put(PAD1, 8);
+      }
+
+      return createBytes(buffer, rsBlocks);
+    };
+
+    _this.addData = function(data, mode) {
+
+      mode = mode || 'Byte';
+
+      var newData = null;
+
+      switch(mode) {
+      case 'Numeric' :
+        newData = qrNumber(data);
+        break;
+      case 'Alphanumeric' :
+        newData = qrAlphaNum(data);
+        break;
+      case 'Byte' :
+        newData = qr8BitByte(data);
+        break;
+      case 'Kanji' :
+        newData = qrKanji(data);
+        break;
+      default :
+        throw 'mode:' + mode;
+      }
+
+      _dataList.push(newData);
+      _dataCache = null;
+    };
+
+    _this.isDark = function(row, col) {
+      if (row < 0 || _moduleCount <= row || col < 0 || _moduleCount <= col) {
+        throw row + ',' + col;
+      }
+      return _modules[row][col];
+    };
+
+    _this.getModuleCount = function() {
+      return _moduleCount;
+    };
+
+    _this.make = function() {
+      if (_typeNumber < 1) {
+        var typeNumber = 1;
+
+        for (; typeNumber < 40; typeNumber++) {
+          var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, _errorCorrectionLevel);
+          var buffer = qrBitBuffer();
+
+          for (var i = 0; i < _dataList.length; i++) {
+            var data = _dataList[i];
+            buffer.put(data.getMode(), 4);
+            buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber) );
+            data.write(buffer);
+          }
+
+          var totalDataCount = 0;
+          for (var i = 0; i < rsBlocks.length; i++) {
+            totalDataCount += rsBlocks[i].dataCount;
+          }
+
+          if (buffer.getLengthInBits() <= totalDataCount * 8) {
+            break;
+          }
+        }
+
+        _typeNumber = typeNumber;
+      }
+
+      makeImpl(false, getBestMaskPattern() );
+    };
+
+    _this.createTableTag = function(cellSize, margin) {
+
+      cellSize = cellSize || 2;
+      margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
+
+      var qrHtml = '';
+
+      qrHtml += '<table style="';
+      qrHtml += ' border-width: 0px; border-style: none;';
+      qrHtml += ' border-collapse: collapse;';
+      qrHtml += ' padding: 0px; margin: ' + margin + 'px;';
+      qrHtml += '">';
+      qrHtml += '<tbody>';
+
+      for (var r = 0; r < _this.getModuleCount(); r += 1) {
+
+        qrHtml += '<tr>';
+
+        for (var c = 0; c < _this.getModuleCount(); c += 1) {
+          qrHtml += '<td style="';
+          qrHtml += ' border-width: 0px; border-style: none;';
+          qrHtml += ' border-collapse: collapse;';
+          qrHtml += ' padding: 0px; margin: 0px;';
+          qrHtml += ' width: ' + cellSize + 'px;';
+          qrHtml += ' height: ' + cellSize + 'px;';
+          qrHtml += ' background-color: ';
+          qrHtml += _this.isDark(r, c)? '#000000' : '#ffffff';
+          qrHtml += ';';
+          qrHtml += '"/>';
+        }
+
+        qrHtml += '</tr>';
+      }
+
+      qrHtml += '</tbody>';
+      qrHtml += '</table>';
+
+      return qrHtml;
+    };
+
+    _this.createSvgTag = function(cellSize, margin, alt, title) {
+
+      var opts = {};
+      if (typeof arguments[0] == 'object') {
+        // Called by options.
+        opts = arguments[0];
+        // overwrite cellSize and margin.
+        cellSize = opts.cellSize;
+        margin = opts.margin;
+        alt = opts.alt;
+        title = opts.title;
+      }
+
+      cellSize = cellSize || 2;
+      margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
+
+      // Compose alt property surrogate
+      alt = (typeof alt === 'string') ? {text: alt} : alt || {};
+      alt.text = alt.text || null;
+      alt.id = (alt.text) ? alt.id || 'qrcode-description' : null;
+
+      // Compose title property surrogate
+      title = (typeof title === 'string') ? {text: title} : title || {};
+      title.text = title.text || null;
+      title.id = (title.text) ? title.id || 'qrcode-title' : null;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+      var c, mc, r, mr, qrSvg='', rect;
+
+      rect = 'l' + cellSize + ',0 0,' + cellSize +
+        ' -' + cellSize + ',0 0,-' + cellSize + 'z ';
+
+      qrSvg += '<svg version="1.1" xmlns="http://www.w3.org/2000/svg"';
+      qrSvg += !opts.scalable ? ' width="' + size + 'px" height="' + size + 'px"' : '';
+      qrSvg += ' viewBox="0 0 ' + size + ' ' + size + '" ';
+      qrSvg += ' preserveAspectRatio="xMinYMin meet"';
+      qrSvg += (title.text || alt.text) ? ' role="img" aria-labelledby="' +
+          escapeXml([title.id, alt.id].join(' ').trim() ) + '"' : '';
+      qrSvg += '>';
+      qrSvg += (title.text) ? '<title id="' + escapeXml(title.id) + '">' +
+          escapeXml(title.text) + '</title>' : '';
+      qrSvg += (alt.text) ? '<description id="' + escapeXml(alt.id) + '">' +
+          escapeXml(alt.text) + '</description>' : '';
+      qrSvg += '<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>';
+      qrSvg += '<path d="';
+
+      for (r = 0; r < _this.getModuleCount(); r += 1) {
+        mr = r * cellSize + margin;
+        for (c = 0; c < _this.getModuleCount(); c += 1) {
+          if (_this.isDark(r, c) ) {
+            mc = c*cellSize+margin;
+            qrSvg += 'M' + mc + ',' + mr + rect;
+          }
+        }
+      }
+
+      qrSvg += '" stroke="transparent" fill="black"/>';
+      qrSvg += '</svg>';
+
+      return qrSvg;
+    };
+
+    _this.createDataURL = function(cellSize, margin) {
+
+      cellSize = cellSize || 2;
+      margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+      var min = margin;
+      var max = size - margin;
+
+      return createDataURL(size, size, function(x, y) {
+        if (min <= x && x < max && min <= y && y < max) {
+          var c = Math.floor( (x - min) / cellSize);
+          var r = Math.floor( (y - min) / cellSize);
+          return _this.isDark(r, c)? 0 : 1;
+        } else {
+          return 1;
+        }
+      } );
+    };
+
+    _this.createImgTag = function(cellSize, margin, alt) {
+
+      cellSize = cellSize || 2;
+      margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+
+      var img = '';
+      img += '<img';
+      img += '\u0020src="';
+      img += _this.createDataURL(cellSize, margin);
+      img += '"';
+      img += '\u0020width="';
+      img += size;
+      img += '"';
+      img += '\u0020height="';
+      img += size;
+      img += '"';
+      if (alt) {
+        img += '\u0020alt="';
+        img += escapeXml(alt);
+        img += '"';
+      }
+      img += '/>';
+
+      return img;
+    };
+
+    var escapeXml = function(s) {
+      var escaped = '';
+      for (var i = 0; i < s.length; i += 1) {
+        var c = s.charAt(i);
+        switch(c) {
+        case '<': escaped += '&lt;'; break;
+        case '>': escaped += '&gt;'; break;
+        case '&': escaped += '&amp;'; break;
+        case '"': escaped += '&quot;'; break;
+        default : escaped += c; break;
+        }
+      }
+      return escaped;
+    };
+
+    var _createHalfASCII = function(margin) {
+      var cellSize = 1;
+      margin = (typeof margin == 'undefined')? cellSize * 2 : margin;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+      var min = margin;
+      var max = size - margin;
+
+      var y, x, r1, r2, p;
+
+      var blocks = {
+        '██': '█',
+        '█ ': '▀',
+        ' █': '▄',
+        '  ': ' '
+      };
+
+      var blocksLastLineNoMargin = {
+        '██': '▀',
+        '█ ': '▀',
+        ' █': ' ',
+        '  ': ' '
+      };
+
+      var ascii = '';
+      for (y = 0; y < size; y += 2) {
+        r1 = Math.floor((y - min) / cellSize);
+        r2 = Math.floor((y + 1 - min) / cellSize);
+        for (x = 0; x < size; x += 1) {
+          p = '█';
+
+          if (min <= x && x < max && min <= y && y < max && _this.isDark(r1, Math.floor((x - min) / cellSize))) {
+            p = ' ';
+          }
+
+          if (min <= x && x < max && min <= y+1 && y+1 < max && _this.isDark(r2, Math.floor((x - min) / cellSize))) {
+            p += ' ';
+          }
+          else {
+            p += '█';
+          }
+
+          // Output 2 characters per pixel, to create full square. 1 character per pixels gives only half width of square.
+          ascii += (margin < 1 && y+1 >= max) ? blocksLastLineNoMargin[p] : blocks[p];
+        }
+
+        ascii += '\n';
+      }
+
+      if (size % 2 && margin > 0) {
+        return ascii.substring(0, ascii.length - size - 1) + Array(size+1).join('▀');
+      }
+
+      return ascii.substring(0, ascii.length-1);
+    };
+
+    _this.createASCII = function(cellSize, margin) {
+      cellSize = cellSize || 1;
+
+      if (cellSize < 2) {
+        return _createHalfASCII(margin);
+      }
+
+      cellSize -= 1;
+      margin = (typeof margin == 'undefined')? cellSize * 2 : margin;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+      var min = margin;
+      var max = size - margin;
+
+      var y, x, r, p;
+
+      var white = Array(cellSize+1).join('██');
+      var black = Array(cellSize+1).join('  ');
+
+      var ascii = '';
+      var line = '';
+      for (y = 0; y < size; y += 1) {
+        r = Math.floor( (y - min) / cellSize);
+        line = '';
+        for (x = 0; x < size; x += 1) {
+          p = 1;
+
+          if (min <= x && x < max && min <= y && y < max && _this.isDark(r, Math.floor((x - min) / cellSize))) {
+            p = 0;
+          }
+
+          // Output 2 characters per pixel, to create full square. 1 character per pixels gives only half width of square.
+          line += p ? white : black;
+        }
+
+        for (r = 0; r < cellSize; r += 1) {
+          ascii += line + '\n';
+        }
+      }
+
+      return ascii.substring(0, ascii.length-1);
+    };
+
+    _this.renderTo2dContext = function(context, cellSize) {
+      cellSize = cellSize || 2;
+      var length = _this.getModuleCount();
+      for (var row = 0; row < length; row++) {
+        for (var col = 0; col < length; col++) {
+          context.fillStyle = _this.isDark(row, col) ? 'black' : 'white';
+          context.fillRect(row * cellSize, col * cellSize, cellSize, cellSize);
+        }
+      }
+    }
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qrcode.stringToBytes
+  //---------------------------------------------------------------------
+
+  qrcode.stringToBytesFuncs = {
+    'default' : function(s) {
+      var bytes = [];
+      for (var i = 0; i < s.length; i += 1) {
+        var c = s.charCodeAt(i);
+        bytes.push(c & 0xff);
+      }
+      return bytes;
+    }
+  };
+
+  qrcode.stringToBytes = qrcode.stringToBytesFuncs['default'];
+
+  //---------------------------------------------------------------------
+  // qrcode.createStringToBytes
+  //---------------------------------------------------------------------
+
+  /**
+   * @param unicodeData base64 string of byte array.
+   * [16bit Unicode],[16bit Bytes], ...
+   * @param numChars
+   */
+  qrcode.createStringToBytes = function(unicodeData, numChars) {
+
+    // create conversion map.
+
+    var unicodeMap = function() {
+
+      var bin = base64DecodeInputStream(unicodeData);
+      var read = function() {
+        var b = bin.read();
+        if (b == -1) throw 'eof';
+        return b;
+      };
+
+      var count = 0;
+      var unicodeMap = {};
+      while (true) {
+        var b0 = bin.read();
+        if (b0 == -1) break;
+        var b1 = read();
+        var b2 = read();
+        var b3 = read();
+        var k = String.fromCharCode( (b0 << 8) | b1);
+        var v = (b2 << 8) | b3;
+        unicodeMap[k] = v;
+        count += 1;
+      }
+      if (count != numChars) {
+        throw count + ' != ' + numChars;
+      }
+
+      return unicodeMap;
+    }();
+
+    var unknownChar = '?'.charCodeAt(0);
+
+    return function(s) {
+      var bytes = [];
+      for (var i = 0; i < s.length; i += 1) {
+        var c = s.charCodeAt(i);
+        if (c < 128) {
+          bytes.push(c);
+        } else {
+          var b = unicodeMap[s.charAt(i)];
+          if (typeof b == 'number') {
+            if ( (b & 0xff) == b) {
+              // 1byte
+              bytes.push(b);
+            } else {
+              // 2bytes
+              bytes.push(b >>> 8);
+              bytes.push(b & 0xff);
+            }
+          } else {
+            bytes.push(unknownChar);
+          }
+        }
+      }
+      return bytes;
+    };
+  };
+
+  //---------------------------------------------------------------------
+  // QRMode
+  //---------------------------------------------------------------------
+
+  var QRMode = {
+    MODE_NUMBER :    1 << 0,
+    MODE_ALPHA_NUM : 1 << 1,
+    MODE_8BIT_BYTE : 1 << 2,
+    MODE_KANJI :     1 << 3
+  };
+
+  //---------------------------------------------------------------------
+  // QRErrorCorrectionLevel
+  //---------------------------------------------------------------------
+
+  var QRErrorCorrectionLevel = {
+    L : 1,
+    M : 0,
+    Q : 3,
+    H : 2
+  };
+
+  //---------------------------------------------------------------------
+  // QRMaskPattern
+  //---------------------------------------------------------------------
+
+  var QRMaskPattern = {
+    PATTERN000 : 0,
+    PATTERN001 : 1,
+    PATTERN010 : 2,
+    PATTERN011 : 3,
+    PATTERN100 : 4,
+    PATTERN101 : 5,
+    PATTERN110 : 6,
+    PATTERN111 : 7
+  };
+
+  //---------------------------------------------------------------------
+  // QRUtil
+  //---------------------------------------------------------------------
+
+  var QRUtil = function() {
+
+    var PATTERN_POSITION_TABLE = [
+      [],
+      [6, 18],
+      [6, 22],
+      [6, 26],
+      [6, 30],
+      [6, 34],
+      [6, 22, 38],
+      [6, 24, 42],
+      [6, 26, 46],
+      [6, 28, 50],
+      [6, 30, 54],
+      [6, 32, 58],
+      [6, 34, 62],
+      [6, 26, 46, 66],
+      [6, 26, 48, 70],
+      [6, 26, 50, 74],
+      [6, 30, 54, 78],
+      [6, 30, 56, 82],
+      [6, 30, 58, 86],
+      [6, 34, 62, 90],
+      [6, 28, 50, 72, 94],
+      [6, 26, 50, 74, 98],
+      [6, 30, 54, 78, 102],
+      [6, 28, 54, 80, 106],
+      [6, 32, 58, 84, 110],
+      [6, 30, 58, 86, 114],
+      [6, 34, 62, 90, 118],
+      [6, 26, 50, 74, 98, 122],
+      [6, 30, 54, 78, 102, 126],
+      [6, 26, 52, 78, 104, 130],
+      [6, 30, 56, 82, 108, 134],
+      [6, 34, 60, 86, 112, 138],
+      [6, 30, 58, 86, 114, 142],
+      [6, 34, 62, 90, 118, 146],
+      [6, 30, 54, 78, 102, 126, 150],
+      [6, 24, 50, 76, 102, 128, 154],
+      [6, 28, 54, 80, 106, 132, 158],
+      [6, 32, 58, 84, 110, 136, 162],
+      [6, 26, 54, 82, 110, 138, 166],
+      [6, 30, 58, 86, 114, 142, 170]
+    ];
+    var G15 = (1 << 10) | (1 << 8) | (1 << 5) | (1 << 4) | (1 << 2) | (1 << 1) | (1 << 0);
+    var G18 = (1 << 12) | (1 << 11) | (1 << 10) | (1 << 9) | (1 << 8) | (1 << 5) | (1 << 2) | (1 << 0);
+    var G15_MASK = (1 << 14) | (1 << 12) | (1 << 10) | (1 << 4) | (1 << 1);
+
+    var _this = {};
+
+    var getBCHDigit = function(data) {
+      var digit = 0;
+      while (data != 0) {
+        digit += 1;
+        data >>>= 1;
+      }
+      return digit;
+    };
+
+    _this.getBCHTypeInfo = function(data) {
+      var d = data << 10;
+      while (getBCHDigit(d) - getBCHDigit(G15) >= 0) {
+        d ^= (G15 << (getBCHDigit(d) - getBCHDigit(G15) ) );
+      }
+      return ( (data << 10) | d) ^ G15_MASK;
+    };
+
+    _this.getBCHTypeNumber = function(data) {
+      var d = data << 12;
+      while (getBCHDigit(d) - getBCHDigit(G18) >= 0) {
+        d ^= (G18 << (getBCHDigit(d) - getBCHDigit(G18) ) );
+      }
+      return (data << 12) | d;
+    };
+
+    _this.getPatternPosition = function(typeNumber) {
+      return PATTERN_POSITION_TABLE[typeNumber - 1];
+    };
+
+    _this.getMaskFunction = function(maskPattern) {
+
+      switch (maskPattern) {
+
+      case QRMaskPattern.PATTERN000 :
+        return function(i, j) { return (i + j) % 2 == 0; };
+      case QRMaskPattern.PATTERN001 :
+        return function(i, j) { return i % 2 == 0; };
+      case QRMaskPattern.PATTERN010 :
+        return function(i, j) { return j % 3 == 0; };
+      case QRMaskPattern.PATTERN011 :
+        return function(i, j) { return (i + j) % 3 == 0; };
+      case QRMaskPattern.PATTERN100 :
+        return function(i, j) { return (Math.floor(i / 2) + Math.floor(j / 3) ) % 2 == 0; };
+      case QRMaskPattern.PATTERN101 :
+        return function(i, j) { return (i * j) % 2 + (i * j) % 3 == 0; };
+      case QRMaskPattern.PATTERN110 :
+        return function(i, j) { return ( (i * j) % 2 + (i * j) % 3) % 2 == 0; };
+      case QRMaskPattern.PATTERN111 :
+        return function(i, j) { return ( (i * j) % 3 + (i + j) % 2) % 2 == 0; };
+
+      default :
+        throw 'bad maskPattern:' + maskPattern;
+      }
+    };
+
+    _this.getErrorCorrectPolynomial = function(errorCorrectLength) {
+      var a = qrPolynomial([1], 0);
+      for (var i = 0; i < errorCorrectLength; i += 1) {
+        a = a.multiply(qrPolynomial([1, QRMath.gexp(i)], 0) );
+      }
+      return a;
+    };
+
+    _this.getLengthInBits = function(mode, type) {
+
+      if (1 <= type && type < 10) {
+
+        // 1 - 9
+
+        switch(mode) {
+        case QRMode.MODE_NUMBER    : return 10;
+        case QRMode.MODE_ALPHA_NUM : return 9;
+        case QRMode.MODE_8BIT_BYTE : return 8;
+        case QRMode.MODE_KANJI     : return 8;
+        default :
+          throw 'mode:' + mode;
+        }
+
+      } else if (type < 27) {
+
+        // 10 - 26
+
+        switch(mode) {
+        case QRMode.MODE_NUMBER    : return 12;
+        case QRMode.MODE_ALPHA_NUM : return 11;
+        case QRMode.MODE_8BIT_BYTE : return 16;
+        case QRMode.MODE_KANJI     : return 10;
+        default :
+          throw 'mode:' + mode;
+        }
+
+      } else if (type < 41) {
+
+        // 27 - 40
+
+        switch(mode) {
+        case QRMode.MODE_NUMBER    : return 14;
+        case QRMode.MODE_ALPHA_NUM : return 13;
+        case QRMode.MODE_8BIT_BYTE : return 16;
+        case QRMode.MODE_KANJI     : return 12;
+        default :
+          throw 'mode:' + mode;
+        }
+
+      } else {
+        throw 'type:' + type;
+      }
+    };
+
+    _this.getLostPoint = function(qrcode) {
+
+      var moduleCount = qrcode.getModuleCount();
+
+      var lostPoint = 0;
+
+      // LEVEL1
+
+      for (var row = 0; row < moduleCount; row += 1) {
+        for (var col = 0; col < moduleCount; col += 1) {
+
+          var sameCount = 0;
+          var dark = qrcode.isDark(row, col);
+
+          for (var r = -1; r <= 1; r += 1) {
+
+            if (row + r < 0 || moduleCount <= row + r) {
+              continue;
+            }
+
+            for (var c = -1; c <= 1; c += 1) {
+
+              if (col + c < 0 || moduleCount <= col + c) {
+                continue;
+              }
+
+              if (r == 0 && c == 0) {
+                continue;
+              }
+
+              if (dark == qrcode.isDark(row + r, col + c) ) {
+                sameCount += 1;
+              }
+            }
+          }
+
+          if (sameCount > 5) {
+            lostPoint += (3 + sameCount - 5);
+          }
+        }
+      };
+
+      // LEVEL2
+
+      for (var row = 0; row < moduleCount - 1; row += 1) {
+        for (var col = 0; col < moduleCount - 1; col += 1) {
+          var count = 0;
+          if (qrcode.isDark(row, col) ) count += 1;
+          if (qrcode.isDark(row + 1, col) ) count += 1;
+          if (qrcode.isDark(row, col + 1) ) count += 1;
+          if (qrcode.isDark(row + 1, col + 1) ) count += 1;
+          if (count == 0 || count == 4) {
+            lostPoint += 3;
+          }
+        }
+      }
+
+      // LEVEL3
+
+      for (var row = 0; row < moduleCount; row += 1) {
+        for (var col = 0; col < moduleCount - 6; col += 1) {
+          if (qrcode.isDark(row, col)
+              && !qrcode.isDark(row, col + 1)
+              &&  qrcode.isDark(row, col + 2)
+              &&  qrcode.isDark(row, col + 3)
+              &&  qrcode.isDark(row, col + 4)
+              && !qrcode.isDark(row, col + 5)
+              &&  qrcode.isDark(row, col + 6) ) {
+            lostPoint += 40;
+          }
+        }
+      }
+
+      for (var col = 0; col < moduleCount; col += 1) {
+        for (var row = 0; row < moduleCount - 6; row += 1) {
+          if (qrcode.isDark(row, col)
+              && !qrcode.isDark(row + 1, col)
+              &&  qrcode.isDark(row + 2, col)
+              &&  qrcode.isDark(row + 3, col)
+              &&  qrcode.isDark(row + 4, col)
+              && !qrcode.isDark(row + 5, col)
+              &&  qrcode.isDark(row + 6, col) ) {
+            lostPoint += 40;
+          }
+        }
+      }
+
+      // LEVEL4
+
+      var darkCount = 0;
+
+      for (var col = 0; col < moduleCount; col += 1) {
+        for (var row = 0; row < moduleCount; row += 1) {
+          if (qrcode.isDark(row, col) ) {
+            darkCount += 1;
+          }
+        }
+      }
+
+      var ratio = Math.abs(100 * darkCount / moduleCount / moduleCount - 50) / 5;
+      lostPoint += ratio * 10;
+
+      return lostPoint;
+    };
+
+    return _this;
+  }();
+
+  //---------------------------------------------------------------------
+  // QRMath
+  //---------------------------------------------------------------------
+
+  var QRMath = function() {
+
+    var EXP_TABLE = new Array(256);
+    var LOG_TABLE = new Array(256);
+
+    // initialize tables
+    for (var i = 0; i < 8; i += 1) {
+      EXP_TABLE[i] = 1 << i;
+    }
+    for (var i = 8; i < 256; i += 1) {
+      EXP_TABLE[i] = EXP_TABLE[i - 4]
+        ^ EXP_TABLE[i - 5]
+        ^ EXP_TABLE[i - 6]
+        ^ EXP_TABLE[i - 8];
+    }
+    for (var i = 0; i < 255; i += 1) {
+      LOG_TABLE[EXP_TABLE[i] ] = i;
+    }
+
+    var _this = {};
+
+    _this.glog = function(n) {
+
+      if (n < 1) {
+        throw 'glog(' + n + ')';
+      }
+
+      return LOG_TABLE[n];
+    };
+
+    _this.gexp = function(n) {
+
+      while (n < 0) {
+        n += 255;
+      }
+
+      while (n >= 256) {
+        n -= 255;
+      }
+
+      return EXP_TABLE[n];
+    };
+
+    return _this;
+  }();
+
+  //---------------------------------------------------------------------
+  // qrPolynomial
+  //---------------------------------------------------------------------
+
+  function qrPolynomial(num, shift) {
+
+    if (typeof num.length == 'undefined') {
+      throw num.length + '/' + shift;
+    }
+
+    var _num = function() {
+      var offset = 0;
+      while (offset < num.length && num[offset] == 0) {
+        offset += 1;
+      }
+      var _num = new Array(num.length - offset + shift);
+      for (var i = 0; i < num.length - offset; i += 1) {
+        _num[i] = num[i + offset];
+      }
+      return _num;
+    }();
+
+    var _this = {};
+
+    _this.getAt = function(index) {
+      return _num[index];
+    };
+
+    _this.getLength = function() {
+      return _num.length;
+    };
+
+    _this.multiply = function(e) {
+
+      var num = new Array(_this.getLength() + e.getLength() - 1);
+
+      for (var i = 0; i < _this.getLength(); i += 1) {
+        for (var j = 0; j < e.getLength(); j += 1) {
+          num[i + j] ^= QRMath.gexp(QRMath.glog(_this.getAt(i) ) + QRMath.glog(e.getAt(j) ) );
+        }
+      }
+
+      return qrPolynomial(num, 0);
+    };
+
+    _this.mod = function(e) {
+
+      if (_this.getLength() - e.getLength() < 0) {
+        return _this;
+      }
+
+      var ratio = QRMath.glog(_this.getAt(0) ) - QRMath.glog(e.getAt(0) );
+
+      var num = new Array(_this.getLength() );
+      for (var i = 0; i < _this.getLength(); i += 1) {
+        num[i] = _this.getAt(i);
+      }
+
+      for (var i = 0; i < e.getLength(); i += 1) {
+        num[i] ^= QRMath.gexp(QRMath.glog(e.getAt(i) ) + ratio);
+      }
+
+      // recursive call
+      return qrPolynomial(num, 0).mod(e);
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // QRRSBlock
+  //---------------------------------------------------------------------
+
+  var QRRSBlock = function() {
+
+    var RS_BLOCK_TABLE = [
+
+      // L
+      // M
+      // Q
+      // H
+
+      // 1
+      [1, 26, 19],
+      [1, 26, 16],
+      [1, 26, 13],
+      [1, 26, 9],
+
+      // 2
+      [1, 44, 34],
+      [1, 44, 28],
+      [1, 44, 22],
+      [1, 44, 16],
+
+      // 3
+      [1, 70, 55],
+      [1, 70, 44],
+      [2, 35, 17],
+      [2, 35, 13],
+
+      // 4
+      [1, 100, 80],
+      [2, 50, 32],
+      [2, 50, 24],
+      [4, 25, 9],
+
+      // 5
+      [1, 134, 108],
+      [2, 67, 43],
+      [2, 33, 15, 2, 34, 16],
+      [2, 33, 11, 2, 34, 12],
+
+      // 6
+      [2, 86, 68],
+      [4, 43, 27],
+      [4, 43, 19],
+      [4, 43, 15],
+
+      // 7
+      [2, 98, 78],
+      [4, 49, 31],
+      [2, 32, 14, 4, 33, 15],
+      [4, 39, 13, 1, 40, 14],
+
+      // 8
+      [2, 121, 97],
+      [2, 60, 38, 2, 61, 39],
+      [4, 40, 18, 2, 41, 19],
+      [4, 40, 14, 2, 41, 15],
+
+      // 9
+      [2, 146, 116],
+      [3, 58, 36, 2, 59, 37],
+      [4, 36, 16, 4, 37, 17],
+      [4, 36, 12, 4, 37, 13],
+
+      // 10
+      [2, 86, 68, 2, 87, 69],
+      [4, 69, 43, 1, 70, 44],
+      [6, 43, 19, 2, 44, 20],
+      [6, 43, 15, 2, 44, 16],
+
+      // 11
+      [4, 101, 81],
+      [1, 80, 50, 4, 81, 51],
+      [4, 50, 22, 4, 51, 23],
+      [3, 36, 12, 8, 37, 13],
+
+      // 12
+      [2, 116, 92, 2, 117, 93],
+      [6, 58, 36, 2, 59, 37],
+      [4, 46, 20, 6, 47, 21],
+      [7, 42, 14, 4, 43, 15],
+
+      // 13
+      [4, 133, 107],
+      [8, 59, 37, 1, 60, 38],
+      [8, 44, 20, 4, 45, 21],
+      [12, 33, 11, 4, 34, 12],
+
+      // 14
+      [3, 145, 115, 1, 146, 116],
+      [4, 64, 40, 5, 65, 41],
+      [11, 36, 16, 5, 37, 17],
+      [11, 36, 12, 5, 37, 13],
+
+      // 15
+      [5, 109, 87, 1, 110, 88],
+      [5, 65, 41, 5, 66, 42],
+      [5, 54, 24, 7, 55, 25],
+      [11, 36, 12, 7, 37, 13],
+
+      // 16
+      [5, 122, 98, 1, 123, 99],
+      [7, 73, 45, 3, 74, 46],
+      [15, 43, 19, 2, 44, 20],
+      [3, 45, 15, 13, 46, 16],
+
+      // 17
+      [1, 135, 107, 5, 136, 108],
+      [10, 74, 46, 1, 75, 47],
+      [1, 50, 22, 15, 51, 23],
+      [2, 42, 14, 17, 43, 15],
+
+      // 18
+      [5, 150, 120, 1, 151, 121],
+      [9, 69, 43, 4, 70, 44],
+      [17, 50, 22, 1, 51, 23],
+      [2, 42, 14, 19, 43, 15],
+
+      // 19
+      [3, 141, 113, 4, 142, 114],
+      [3, 70, 44, 11, 71, 45],
+      [17, 47, 21, 4, 48, 22],
+      [9, 39, 13, 16, 40, 14],
+
+      // 20
+      [3, 135, 107, 5, 136, 108],
+      [3, 67, 41, 13, 68, 42],
+      [15, 54, 24, 5, 55, 25],
+      [15, 43, 15, 10, 44, 16],
+
+      // 21
+      [4, 144, 116, 4, 145, 117],
+      [17, 68, 42],
+      [17, 50, 22, 6, 51, 23],
+      [19, 46, 16, 6, 47, 17],
+
+      // 22
+      [2, 139, 111, 7, 140, 112],
+      [17, 74, 46],
+      [7, 54, 24, 16, 55, 25],
+      [34, 37, 13],
+
+      // 23
+      [4, 151, 121, 5, 152, 122],
+      [4, 75, 47, 14, 76, 48],
+      [11, 54, 24, 14, 55, 25],
+      [16, 45, 15, 14, 46, 16],
+
+      // 24
+      [6, 147, 117, 4, 148, 118],
+      [6, 73, 45, 14, 74, 46],
+      [11, 54, 24, 16, 55, 25],
+      [30, 46, 16, 2, 47, 17],
+
+      // 25
+      [8, 132, 106, 4, 133, 107],
+      [8, 75, 47, 13, 76, 48],
+      [7, 54, 24, 22, 55, 25],
+      [22, 45, 15, 13, 46, 16],
+
+      // 26
+      [10, 142, 114, 2, 143, 115],
+      [19, 74, 46, 4, 75, 47],
+      [28, 50, 22, 6, 51, 23],
+      [33, 46, 16, 4, 47, 17],
+
+      // 27
+      [8, 152, 122, 4, 153, 123],
+      [22, 73, 45, 3, 74, 46],
+      [8, 53, 23, 26, 54, 24],
+      [12, 45, 15, 28, 46, 16],
+
+      // 28
+      [3, 147, 117, 10, 148, 118],
+      [3, 73, 45, 23, 74, 46],
+      [4, 54, 24, 31, 55, 25],
+      [11, 45, 15, 31, 46, 16],
+
+      // 29
+      [7, 146, 116, 7, 147, 117],
+      [21, 73, 45, 7, 74, 46],
+      [1, 53, 23, 37, 54, 24],
+      [19, 45, 15, 26, 46, 16],
+
+      // 30
+      [5, 145, 115, 10, 146, 116],
+      [19, 75, 47, 10, 76, 48],
+      [15, 54, 24, 25, 55, 25],
+      [23, 45, 15, 25, 46, 16],
+
+      // 31
+      [13, 145, 115, 3, 146, 116],
+      [2, 74, 46, 29, 75, 47],
+      [42, 54, 24, 1, 55, 25],
+      [23, 45, 15, 28, 46, 16],
+
+      // 32
+      [17, 145, 115],
+      [10, 74, 46, 23, 75, 47],
+      [10, 54, 24, 35, 55, 25],
+      [19, 45, 15, 35, 46, 16],
+
+      // 33
+      [17, 145, 115, 1, 146, 116],
+      [14, 74, 46, 21, 75, 47],
+      [29, 54, 24, 19, 55, 25],
+      [11, 45, 15, 46, 46, 16],
+
+      // 34
+      [13, 145, 115, 6, 146, 116],
+      [14, 74, 46, 23, 75, 47],
+      [44, 54, 24, 7, 55, 25],
+      [59, 46, 16, 1, 47, 17],
+
+      // 35
+      [12, 151, 121, 7, 152, 122],
+      [12, 75, 47, 26, 76, 48],
+      [39, 54, 24, 14, 55, 25],
+      [22, 45, 15, 41, 46, 16],
+
+      // 36
+      [6, 151, 121, 14, 152, 122],
+      [6, 75, 47, 34, 76, 48],
+      [46, 54, 24, 10, 55, 25],
+      [2, 45, 15, 64, 46, 16],
+
+      // 37
+      [17, 152, 122, 4, 153, 123],
+      [29, 74, 46, 14, 75, 47],
+      [49, 54, 24, 10, 55, 25],
+      [24, 45, 15, 46, 46, 16],
+
+      // 38
+      [4, 152, 122, 18, 153, 123],
+      [13, 74, 46, 32, 75, 47],
+      [48, 54, 24, 14, 55, 25],
+      [42, 45, 15, 32, 46, 16],
+
+      // 39
+      [20, 147, 117, 4, 148, 118],
+      [40, 75, 47, 7, 76, 48],
+      [43, 54, 24, 22, 55, 25],
+      [10, 45, 15, 67, 46, 16],
+
+      // 40
+      [19, 148, 118, 6, 149, 119],
+      [18, 75, 47, 31, 76, 48],
+      [34, 54, 24, 34, 55, 25],
+      [20, 45, 15, 61, 46, 16]
+    ];
+
+    var qrRSBlock = function(totalCount, dataCount) {
+      var _this = {};
+      _this.totalCount = totalCount;
+      _this.dataCount = dataCount;
+      return _this;
+    };
+
+    var _this = {};
+
+    var getRsBlockTable = function(typeNumber, errorCorrectionLevel) {
+
+      switch(errorCorrectionLevel) {
+      case QRErrorCorrectionLevel.L :
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 0];
+      case QRErrorCorrectionLevel.M :
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 1];
+      case QRErrorCorrectionLevel.Q :
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 2];
+      case QRErrorCorrectionLevel.H :
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 3];
+      default :
+        return undefined;
+      }
+    };
+
+    _this.getRSBlocks = function(typeNumber, errorCorrectionLevel) {
+
+      var rsBlock = getRsBlockTable(typeNumber, errorCorrectionLevel);
+
+      if (typeof rsBlock == 'undefined') {
+        throw 'bad rs block @ typeNumber:' + typeNumber +
+            '/errorCorrectionLevel:' + errorCorrectionLevel;
+      }
+
+      var length = rsBlock.length / 3;
+
+      var list = [];
+
+      for (var i = 0; i < length; i += 1) {
+
+        var count = rsBlock[i * 3 + 0];
+        var totalCount = rsBlock[i * 3 + 1];
+        var dataCount = rsBlock[i * 3 + 2];
+
+        for (var j = 0; j < count; j += 1) {
+          list.push(qrRSBlock(totalCount, dataCount) );
+        }
+      }
+
+      return list;
+    };
+
+    return _this;
+  }();
+
+  //---------------------------------------------------------------------
+  // qrBitBuffer
+  //---------------------------------------------------------------------
+
+  var qrBitBuffer = function() {
+
+    var _buffer = [];
+    var _length = 0;
+
+    var _this = {};
+
+    _this.getBuffer = function() {
+      return _buffer;
+    };
+
+    _this.getAt = function(index) {
+      var bufIndex = Math.floor(index / 8);
+      return ( (_buffer[bufIndex] >>> (7 - index % 8) ) & 1) == 1;
+    };
+
+    _this.put = function(num, length) {
+      for (var i = 0; i < length; i += 1) {
+        _this.putBit( ( (num >>> (length - i - 1) ) & 1) == 1);
+      }
+    };
+
+    _this.getLengthInBits = function() {
+      return _length;
+    };
+
+    _this.putBit = function(bit) {
+
+      var bufIndex = Math.floor(_length / 8);
+      if (_buffer.length <= bufIndex) {
+        _buffer.push(0);
+      }
+
+      if (bit) {
+        _buffer[bufIndex] |= (0x80 >>> (_length % 8) );
+      }
+
+      _length += 1;
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qrNumber
+  //---------------------------------------------------------------------
+
+  var qrNumber = function(data) {
+
+    var _mode = QRMode.MODE_NUMBER;
+    var _data = data;
+
+    var _this = {};
+
+    _this.getMode = function() {
+      return _mode;
+    };
+
+    _this.getLength = function(buffer) {
+      return _data.length;
+    };
+
+    _this.write = function(buffer) {
+
+      var data = _data;
+
+      var i = 0;
+
+      while (i + 2 < data.length) {
+        buffer.put(strToNum(data.substring(i, i + 3) ), 10);
+        i += 3;
+      }
+
+      if (i < data.length) {
+        if (data.length - i == 1) {
+          buffer.put(strToNum(data.substring(i, i + 1) ), 4);
+        } else if (data.length - i == 2) {
+          buffer.put(strToNum(data.substring(i, i + 2) ), 7);
+        }
+      }
+    };
+
+    var strToNum = function(s) {
+      var num = 0;
+      for (var i = 0; i < s.length; i += 1) {
+        num = num * 10 + chatToNum(s.charAt(i) );
+      }
+      return num;
+    };
+
+    var chatToNum = function(c) {
+      if ('0' <= c && c <= '9') {
+        return c.charCodeAt(0) - '0'.charCodeAt(0);
+      }
+      throw 'illegal char :' + c;
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qrAlphaNum
+  //---------------------------------------------------------------------
+
+  var qrAlphaNum = function(data) {
+
+    var _mode = QRMode.MODE_ALPHA_NUM;
+    var _data = data;
+
+    var _this = {};
+
+    _this.getMode = function() {
+      return _mode;
+    };
+
+    _this.getLength = function(buffer) {
+      return _data.length;
+    };
+
+    _this.write = function(buffer) {
+
+      var s = _data;
+
+      var i = 0;
+
+      while (i + 1 < s.length) {
+        buffer.put(
+          getCode(s.charAt(i) ) * 45 +
+          getCode(s.charAt(i + 1) ), 11);
+        i += 2;
+      }
+
+      if (i < s.length) {
+        buffer.put(getCode(s.charAt(i) ), 6);
+      }
+    };
+
+    var getCode = function(c) {
+
+      if ('0' <= c && c <= '9') {
+        return c.charCodeAt(0) - '0'.charCodeAt(0);
+      } else if ('A' <= c && c <= 'Z') {
+        return c.charCodeAt(0) - 'A'.charCodeAt(0) + 10;
+      } else {
+        switch (c) {
+        case ' ' : return 36;
+        case '$' : return 37;
+        case '%' : return 38;
+        case '*' : return 39;
+        case '+' : return 40;
+        case '-' : return 41;
+        case '.' : return 42;
+        case '/' : return 43;
+        case ':' : return 44;
+        default :
+          throw 'illegal char :' + c;
+        }
+      }
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qr8BitByte
+  //---------------------------------------------------------------------
+
+  var qr8BitByte = function(data) {
+
+    var _mode = QRMode.MODE_8BIT_BYTE;
+    var _data = data;
+    var _bytes = qrcode.stringToBytes(data);
+
+    var _this = {};
+
+    _this.getMode = function() {
+      return _mode;
+    };
+
+    _this.getLength = function(buffer) {
+      return _bytes.length;
+    };
+
+    _this.write = function(buffer) {
+      for (var i = 0; i < _bytes.length; i += 1) {
+        buffer.put(_bytes[i], 8);
+      }
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qrKanji
+  //---------------------------------------------------------------------
+
+  var qrKanji = function(data) {
+
+    var _mode = QRMode.MODE_KANJI;
+    var _data = data;
+
+    var stringToBytes = qrcode.stringToBytesFuncs['SJIS'];
+    if (!stringToBytes) {
+      throw 'sjis not supported.';
+    }
+    !function(c, code) {
+      // self test for sjis support.
+      var test = stringToBytes(c);
+      if (test.length != 2 || ( (test[0] << 8) | test[1]) != code) {
+        throw 'sjis not supported.';
+      }
+    }('\u53cb', 0x9746);
+
+    var _bytes = stringToBytes(data);
+
+    var _this = {};
+
+    _this.getMode = function() {
+      return _mode;
+    };
+
+    _this.getLength = function(buffer) {
+      return ~~(_bytes.length / 2);
+    };
+
+    _this.write = function(buffer) {
+
+      var data = _bytes;
+
+      var i = 0;
+
+      while (i + 1 < data.length) {
+
+        var c = ( (0xff & data[i]) << 8) | (0xff & data[i + 1]);
+
+        if (0x8140 <= c && c <= 0x9FFC) {
+          c -= 0x8140;
+        } else if (0xE040 <= c && c <= 0xEBBF) {
+          c -= 0xC140;
+        } else {
+          throw 'illegal char at ' + (i + 1) + '/' + c;
+        }
+
+        c = ( (c >>> 8) & 0xff) * 0xC0 + (c & 0xff);
+
+        buffer.put(c, 13);
+
+        i += 2;
+      }
+
+      if (i < data.length) {
+        throw 'illegal char at ' + (i + 1);
+      }
+    };
+
+    return _this;
+  };
+
+  //=====================================================================
+  // GIF Support etc.
+  //
+
+  //---------------------------------------------------------------------
+  // byteArrayOutputStream
+  //---------------------------------------------------------------------
+
+  var byteArrayOutputStream = function() {
+
+    var _bytes = [];
+
+    var _this = {};
+
+    _this.writeByte = function(b) {
+      _bytes.push(b & 0xff);
+    };
+
+    _this.writeShort = function(i) {
+      _this.writeByte(i);
+      _this.writeByte(i >>> 8);
+    };
+
+    _this.writeBytes = function(b, off, len) {
+      off = off || 0;
+      len = len || b.length;
+      for (var i = 0; i < len; i += 1) {
+        _this.writeByte(b[i + off]);
+      }
+    };
+
+    _this.writeString = function(s) {
+      for (var i = 0; i < s.length; i += 1) {
+        _this.writeByte(s.charCodeAt(i) );
+      }
+    };
+
+    _this.toByteArray = function() {
+      return _bytes;
+    };
+
+    _this.toString = function() {
+      var s = '';
+      s += '[';
+      for (var i = 0; i < _bytes.length; i += 1) {
+        if (i > 0) {
+          s += ',';
+        }
+        s += _bytes[i];
+      }
+      s += ']';
+      return s;
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // base64EncodeOutputStream
+  //---------------------------------------------------------------------
+
+  var base64EncodeOutputStream = function() {
+
+    var _buffer = 0;
+    var _buflen = 0;
+    var _length = 0;
+    var _base64 = '';
+
+    var _this = {};
+
+    var writeEncoded = function(b) {
+      _base64 += String.fromCharCode(encode(b & 0x3f) );
+    };
+
+    var encode = function(n) {
+      if (n < 0) {
+        // error.
+      } else if (n < 26) {
+        return 0x41 + n;
+      } else if (n < 52) {
+        return 0x61 + (n - 26);
+      } else if (n < 62) {
+        return 0x30 + (n - 52);
+      } else if (n == 62) {
+        return 0x2b;
+      } else if (n == 63) {
+        return 0x2f;
+      }
+      throw 'n:' + n;
+    };
+
+    _this.writeByte = function(n) {
+
+      _buffer = (_buffer << 8) | (n & 0xff);
+      _buflen += 8;
+      _length += 1;
+
+      while (_buflen >= 6) {
+        writeEncoded(_buffer >>> (_buflen - 6) );
+        _buflen -= 6;
+      }
+    };
+
+    _this.flush = function() {
+
+      if (_buflen > 0) {
+        writeEncoded(_buffer << (6 - _buflen) );
+        _buffer = 0;
+        _buflen = 0;
+      }
+
+      if (_length % 3 != 0) {
+        // padding
+        var padlen = 3 - _length % 3;
+        for (var i = 0; i < padlen; i += 1) {
+          _base64 += '=';
+        }
+      }
+    };
+
+    _this.toString = function() {
+      return _base64;
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // base64DecodeInputStream
+  //---------------------------------------------------------------------
+
+  var base64DecodeInputStream = function(str) {
+
+    var _str = str;
+    var _pos = 0;
+    var _buffer = 0;
+    var _buflen = 0;
+
+    var _this = {};
+
+    _this.read = function() {
+
+      while (_buflen < 8) {
+
+        if (_pos >= _str.length) {
+          if (_buflen == 0) {
+            return -1;
+          }
+          throw 'unexpected end of file./' + _buflen;
+        }
+
+        var c = _str.charAt(_pos);
+        _pos += 1;
+
+        if (c == '=') {
+          _buflen = 0;
+          return -1;
+        } else if (c.match(/^\s$/) ) {
+          // ignore if whitespace.
+          continue;
+        }
+
+        _buffer = (_buffer << 6) | decode(c.charCodeAt(0) );
+        _buflen += 6;
+      }
+
+      var n = (_buffer >>> (_buflen - 8) ) & 0xff;
+      _buflen -= 8;
+      return n;
+    };
+
+    var decode = function(c) {
+      if (0x41 <= c && c <= 0x5a) {
+        return c - 0x41;
+      } else if (0x61 <= c && c <= 0x7a) {
+        return c - 0x61 + 26;
+      } else if (0x30 <= c && c <= 0x39) {
+        return c - 0x30 + 52;
+      } else if (c == 0x2b) {
+        return 62;
+      } else if (c == 0x2f) {
+        return 63;
+      } else {
+        throw 'c:' + c;
+      }
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // gifImage (B/W)
+  //---------------------------------------------------------------------
+
+  var gifImage = function(width, height) {
+
+    var _width = width;
+    var _height = height;
+    var _data = new Array(width * height);
+
+    var _this = {};
+
+    _this.setPixel = function(x, y, pixel) {
+      _data[y * _width + x] = pixel;
+    };
+
+    _this.write = function(out) {
+
+      //---------------------------------
+      // GIF Signature
+
+      out.writeString('GIF87a');
+
+      //---------------------------------
+      // Screen Descriptor
+
+      out.writeShort(_width);
+      out.writeShort(_height);
+
+      out.writeByte(0x80); // 2bit
+      out.writeByte(0);
+      out.writeByte(0);
+
+      //---------------------------------
+      // Global Color Map
+
+      // black
+      out.writeByte(0x00);
+      out.writeByte(0x00);
+      out.writeByte(0x00);
+
+      // white
+      out.writeByte(0xff);
+      out.writeByte(0xff);
+      out.writeByte(0xff);
+
+      //---------------------------------
+      // Image Descriptor
+
+      out.writeString(',');
+      out.writeShort(0);
+      out.writeShort(0);
+      out.writeShort(_width);
+      out.writeShort(_height);
+      out.writeByte(0);
+
+      //---------------------------------
+      // Local Color Map
+
+      //---------------------------------
+      // Raster Data
+
+      var lzwMinCodeSize = 2;
+      var raster = getLZWRaster(lzwMinCodeSize);
+
+      out.writeByte(lzwMinCodeSize);
+
+      var offset = 0;
+
+      while (raster.length - offset > 255) {
+        out.writeByte(255);
+        out.writeBytes(raster, offset, 255);
+        offset += 255;
+      }
+
+      out.writeByte(raster.length - offset);
+      out.writeBytes(raster, offset, raster.length - offset);
+      out.writeByte(0x00);
+
+      //---------------------------------
+      // GIF Terminator
+      out.writeString(';');
+    };
+
+    var bitOutputStream = function(out) {
+
+      var _out = out;
+      var _bitLength = 0;
+      var _bitBuffer = 0;
+
+      var _this = {};
+
+      _this.write = function(data, length) {
+
+        if ( (data >>> length) != 0) {
+          throw 'length over';
+        }
+
+        while (_bitLength + length >= 8) {
+          _out.writeByte(0xff & ( (data << _bitLength) | _bitBuffer) );
+          length -= (8 - _bitLength);
+          data >>>= (8 - _bitLength);
+          _bitBuffer = 0;
+          _bitLength = 0;
+        }
+
+        _bitBuffer = (data << _bitLength) | _bitBuffer;
+        _bitLength = _bitLength + length;
+      };
+
+      _this.flush = function() {
+        if (_bitLength > 0) {
+          _out.writeByte(_bitBuffer);
+        }
+      };
+
+      return _this;
+    };
+
+    var getLZWRaster = function(lzwMinCodeSize) {
+
+      var clearCode = 1 << lzwMinCodeSize;
+      var endCode = (1 << lzwMinCodeSize) + 1;
+      var bitLength = lzwMinCodeSize + 1;
+
+      // Setup LZWTable
+      var table = lzwTable();
+
+      for (var i = 0; i < clearCode; i += 1) {
+        table.add(String.fromCharCode(i) );
+      }
+      table.add(String.fromCharCode(clearCode) );
+      table.add(String.fromCharCode(endCode) );
+
+      var byteOut = byteArrayOutputStream();
+      var bitOut = bitOutputStream(byteOut);
+
+      // clear code
+      bitOut.write(clearCode, bitLength);
+
+      var dataIndex = 0;
+
+      var s = String.fromCharCode(_data[dataIndex]);
+      dataIndex += 1;
+
+      while (dataIndex < _data.length) {
+
+        var c = String.fromCharCode(_data[dataIndex]);
+        dataIndex += 1;
+
+        if (table.contains(s + c) ) {
+
+          s = s + c;
+
+        } else {
+
+          bitOut.write(table.indexOf(s), bitLength);
+
+          if (table.size() < 0xfff) {
+
+            if (table.size() == (1 << bitLength) ) {
+              bitLength += 1;
+            }
+
+            table.add(s + c);
+          }
+
+          s = c;
+        }
+      }
+
+      bitOut.write(table.indexOf(s), bitLength);
+
+      // end code
+      bitOut.write(endCode, bitLength);
+
+      bitOut.flush();
+
+      return byteOut.toByteArray();
+    };
+
+    var lzwTable = function() {
+
+      var _map = {};
+      var _size = 0;
+
+      var _this = {};
+
+      _this.add = function(key) {
+        if (_this.contains(key) ) {
+          throw 'dup key:' + key;
+        }
+        _map[key] = _size;
+        _size += 1;
+      };
+
+      _this.size = function() {
+        return _size;
+      };
+
+      _this.indexOf = function(key) {
+        return _map[key];
+      };
+
+      _this.contains = function(key) {
+        return typeof _map[key] != 'undefined';
+      };
+
+      return _this;
+    };
+
+    return _this;
+  };
+
+  var createDataURL = function(width, height, getPixel) {
+    var gif = gifImage(width, height);
+    for (var y = 0; y < height; y += 1) {
+      for (var x = 0; x < width; x += 1) {
+        gif.setPixel(x, y, getPixel(x, y) );
+      }
+    }
+
+    var b = byteArrayOutputStream();
+    gif.write(b);
+
+    var base64 = base64EncodeOutputStream();
+    var bytes = b.toByteArray();
+    for (var i = 0; i < bytes.length; i += 1) {
+      base64.writeByte(bytes[i]);
+    }
+    base64.flush();
+
+    return 'data:image/gif;base64,' + base64;
+  };
+
+  //---------------------------------------------------------------------
+  // returns qrcode function.
+
+  return qrcode;
+}();
+
+// multibyte support
+!function() {
+
+  qrcode.stringToBytesFuncs['UTF-8'] = function(s) {
+    // http://stackoverflow.com/questions/18729405/how-to-convert-utf8-string-to-byte-array
+    function toUTF8Array(str) {
+      var utf8 = [];
+      for (var i=0; i < str.length; i++) {
+        var charcode = str.charCodeAt(i);
+        if (charcode < 0x80) utf8.push(charcode);
+        else if (charcode < 0x800) {
+          utf8.push(0xc0 | (charcode >> 6),
+              0x80 | (charcode & 0x3f));
+        }
+        else if (charcode < 0xd800 || charcode >= 0xe000) {
+          utf8.push(0xe0 | (charcode >> 12),
+              0x80 | ((charcode>>6) & 0x3f),
+              0x80 | (charcode & 0x3f));
+        }
+        // surrogate pair
+        else {
+          i++;
+          // UTF-16 encodes 0x10000-0x10FFFF by
+          // subtracting 0x10000 and splitting the
+          // 20 bits of 0x0-0xFFFFF into two halves
+          charcode = 0x10000 + (((charcode & 0x3ff)<<10)
+            | (str.charCodeAt(i) & 0x3ff));
+          utf8.push(0xf0 | (charcode >>18),
+              0x80 | ((charcode>>12) & 0x3f),
+              0x80 | ((charcode>>6) & 0x3f),
+              0x80 | (charcode & 0x3f));
+        }
+      }
+      return utf8;
+    }
+    return toUTF8Array(s);
+  };
+
+}();
+
+window.QRGEN = qrcode;
 
 /* ---- calc.js ---- */
 /* ===== Cálculos (mismo motor que usará el ETL del conversor) ===== */
@@ -1704,13 +4205,35 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
 
   /* ================= INGRESO ================= */
   /* ===== Ingreso: animación de marca → tipo de usuario → perfil → contraseña ===== */
-  let pasoIng = 'splash', tipoIng = null, timerSplash = null;
+  let pasoIng = 'splash', tipoIng = null, timerSplash = null, cargaAlumno = null, errorAlumno = '';
+  window.S_YO = () => S.yo;
+  const NB = window.NUBE, modoAlumno = () => LOCAL && NB && NB.esAlumno();
+  /* alumno: baja su archivo de GitHub (al abrir y con "Actualizar"). Si no hay internet, usa lo último que bajó */
+  function iniciarAlumno(acc) {
+    errorAlumno = '';
+    cargaAlumno = NB.descargarAlumno(acc).then(v => { S.yo = v.usuario; S.ver = v.usuario; S.tab = 'inicio'; guardar(); cargaAlumno = null; if (pasoIng !== 'splash' && !$('#splash')) render(); return true; },
+      e => { cargaAlumno = null; errorAlumno = e.tipo === 'sinacceso' ? 'Este acceso ya no existe. Pedile a tu profesor un link o QR nuevo.' : e.tipo === 'clave' ? 'El link no es válido. Pedile a tu profesor uno nuevo.' : 'No se pudo actualizar (sin conexión). Se muestra lo último que bajaste.'; const sp = $('#spMsg'); if (sp) sp.textContent = errorAlumno; return false; });
+    return cargaAlumno;
+  }
+  function entrarAlumno() { const a = DB.local.meta.alumno; if (!a) return false; S.yo = a.usuario; S.ver = a.usuario; if (!['inicio', 'progreso', 'musculos', 'historial'].includes(S.tab)) S.tab = 'inicio'; guardar(); render(); return true; }
+  function pegarLink() {
+    hoja(`<div class="tag">Acceso de alumno</div><h3>Pegá tu link</h3><div class="sub" style="margin:4px 0 12px">Tu profesor te mandó un link (por WhatsApp o mail) o un QR. Si lo escaneás con la cámara se abre solo; si no, copiá el link y pegalo acá.</div>
+      <div class="f"><input id="lkIn" placeholder="https://…#a=…" autocomplete="off" autocapitalize="off"></div><div id="lkErr" style="color:var(--crit);font-size:13px;min-height:18px"></div>
+      <button class="btn" id="lkOk">Entrar</button>`, v => {
+      v.querySelector('#lkOk').onclick = () => {
+        const t = v.querySelector('#lkIn').value.trim(), m = t.match(/a=([A-Za-z0-9_-]{8,20})\.([A-Za-z0-9_-]{40,50})/);
+        if (!m) { v.querySelector('#lkErr').textContent = 'Ese link no es un acceso de MADEBE'; return; }
+        const b = v.querySelector('#lkOk'); b.textContent = 'Descargando…'; b.disabled = true;
+        iniciarAlumno({ id: m[1], k: m[2] }).then(ok => { if (ok) { v.remove(); entrarAlumno(); toast('¡Listo! Ya ves tu progreso'); } else { b.textContent = 'Entrar'; b.disabled = false; v.querySelector('#lkErr').textContent = errorAlumno; } });
+      };
+    });
+  }
   const firma = clase => `<div class="firma ${clase || ''}">${VERSION} · App desarrollada en Argentina | Baster</div>`;
   function vistaLogin() {
     const app = document.getElementById('app'); clearTimeout(timerSplash);
     if (pasoIng === 'splash') {
       app.innerHTML = `<div class="splash" id="splash"><button class="saltar" id="spSaltar">Saltar</button><div class="logo-wrap">${MARCA.logo({ anim: true })}</div>
-        <div class="acciones-sp"><button class="btn-ing" id="btnIngresar">INGRESAR</button></div>${firma('pie')}</div>`;
+        <div class="acciones-sp"><button class="btn-ing" id="btnIngresar">INGRESAR</button><div class="sp-msg" id="spMsg">${esc(errorAlumno)}</div></div>${firma('pie')}</div>`;
       const sp = $('#splash'), listo = () => sp.classList.add('listo');
       /* un solo reloj: el corredor y el cono siguen el tiempo de la animación CSS del recorrido (lgBola),
          que arranca recién con la pantalla pintada y las fuentes listas */
@@ -1728,7 +4251,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
       }));
       if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) { finSmil(); listo(); }
       else Promise.race([document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve(), new Promise(r => setTimeout(r, 1500))]).then(arrancar);
-      sp.addEventListener('click', e => { if (e.target.closest('#btnIngresar')) { if (S.yo && C.usr[S.yo]) { pasoIng = 'tipo'; render(); } else { pasoIng = 'tipo'; vistaLogin(); } return; } if (!sp.classList.contains('listo')) { sp.classList.add('fin'); finSmil(); listo(); } });
+      sp.addEventListener('click', e => { if (e.target.closest('#btnIngresar')) { if (modoAlumno() || cargaAlumno) { const b = $('#btnIngresar'); if (cargaAlumno) { b.textContent = 'CARGANDO…'; cargaAlumno.then(() => { if (!entrarAlumno()) { b.textContent = 'INGRESAR'; } }); return; } entrarAlumno(); return; } if (S.yo && C.usr[S.yo]) { pasoIng = 'tipo'; render(); } else { pasoIng = 'tipo'; vistaLogin(); } return; } if (!sp.classList.contains('listo')) { sp.classList.add('fin'); finSmil(); listo(); } });
       return;
     }
     const cab = `<div class="logo-wrap">${MARCA.logo({})}</div>`;
@@ -1736,7 +4259,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
       app.innerHTML = `<div class="ingreso">${cab}<h2 class="disp">¿Cómo ingresás?</h2><div class="sub">Elegí tu tipo de usuario.</div>
         <button class="tipo" data-tipo-ing="profesor"><span class="ic">${MARCA.icono('brazo', { tam: 46 })}</span><span><b class="disp">Soy profesor</b><small>Rutinas, clases, asistencia y progreso de tus alumnos</small></span><span class="fl">›</span></button>
         <button class="tipo" data-tipo-ing="alumno"><span class="ic">${MARCA.icono('corredor', { tam: 46 })}</span><span><b class="disp">Soy alumno</b><small>Tus clases, los músculos que trabajaste y tu progreso</small></span><span class="fl">›</span></button>
-        <button class="link-adm" data-tipo-ing="admin">Administración</button>
+        ${LOCAL ? '<button class="link-adm" data-link-alumno style="margin-top:4px">Tengo un link de acceso de alumno</button>' : ''}<button class="link-adm" data-tipo-ing="admin">Administración</button>
         <div class="espacio"></div><div class="sub" style="text-align:center;font-size:11px;margin-top:20px">${LOCAL ? 'Los datos se guardan solo en este dispositivo. Contraseña inicial: 1234.' : 'En la versión real, la primera vez se pega la clave de acceso. En esta demo la contraseña es 1234.'}</div>${firma()}</div>`;
       return;
     }
@@ -1774,9 +4297,9 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     if (!tabs.includes(S.tab)) S.tab = tabs[esProfe() ? 1 : 0];
     const pend = DB.pendientes();
     let h = `<header class="top"><div class="fila"><div class="marca-top"><span class="mini-logo">${MARCA.icono('corredor', { tam: 26, bg: '#2A2B30' })}</span><div class="titulo">${TITULO[S.tab]}</div></div>
-      ${esProfe() && LOCAL ? chipCopia() : esProfe() ? `<button class="sync ${pend ? 'pend' : ''}" id="btnSync"><b></b>${pend ? pend + ' por enviar' : 'Sincronizado'}</button>` : `<span class="sync" title="Tu profesor carga las clases; vos las ves acá">Solo lectura</span>`}
+      ${esProfe() && LOCAL && NB && NB.conectado() ? chipNube() : esProfe() && LOCAL ? chipCopia() : !esProfe() && modoAlumno() ? `<button class="sync" id="btnActAlu"><b></b>${cargaAlumno ? 'Actualizando…' : 'Act. ' + fHora(DB.local.meta.alumno.generado)}</button>` : esProfe() ? `<button class="sync ${pend ? 'pend' : ''}" id="btnSync"><b></b>${pend ? pend + ' por enviar' : 'Sincronizado'}</button>` : `<span class="sync" title="Tu profesor carga las clases; vos las ves acá">Solo lectura</span>`}
       <button class="avatar" id="btnYo" aria-label="Perfil">${ini(yo().nombre)}</button></div>
-      <div class="info" id="infoLinea">MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${esProfe() && LOCAL ? lineaCopia() : esProfe() ? (pend ? pend + ' cambios por enviar' : DB.ultimaSync ? 'act. ' + DB.ultimaSync : 'sin cambios pendientes') : 'datos de tu profesor'}</div>`;
+      <div class="info" id="infoLinea">MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${esProfe() && LOCAL && NB && NB.conectado() ? lineaNube() : esProfe() && LOCAL ? lineaCopia() : modoAlumno() ? 'datos de ' + esc(DB.local.meta.alumno.profesor || 'tu profesor') : esProfe() ? (pend ? pend + ' cambios por enviar' : DB.ultimaSync ? 'act. ' + DB.ultimaSync : 'sin cambios pendientes') : 'datos de tu profesor'}</div>`;
     if (esProfe() && (S.tab === 'progreso' || S.tab === 'musculos')) {
       h += `<div class="viendo">Alumno <select id="selVer">${porGrupoHabitual(alumnosVisibles()).map(([n, us, g]) => `<optgroup label="${g ? 'Clase ' + esc(n) : esc(n)}">${us.map(u => `<option value="${u.usuario}" ${u.usuario === S.ver ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</optgroup>`).join('')}</select></div>`;
     }
@@ -1785,7 +4308,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     if (S.tab === 'progreso' && esProfe()) subs = subs.concat([['historial', 'Historial']]);
     if (S.tab === 'rutinas' && !esAdmin() && C.USUARIOS.filter(u => u.rol === 'profesor' && u.activo).length < 2) { subs = subs.filter(x => x[0] !== 'compartidas'); if (S.subR === 'compartidas') S.subR = 'mis'; }
     if (subs) { const cur = S[subDe(S.tab)]; h += `<div class="subtabs">${subs.map(([k, t]) => `<button data-sub="${k}" class="${cur === k ? 'on' : ''}">${t}</button>`).join('')}</div>`; }
-    if (LOCAL && esProfe() && avisoCopia()) h += `<div class="aviso-copia"><span>${avisoCopia()}</span><button data-copia>Hacer copia</button></div>`;
+    if (LOCAL && esProfe() && !(NB && NB.conectado()) && avisoCopia()) h += `<div class="aviso-copia"><span>${avisoCopia()}</span><button data-copia>Hacer copia</button></div>`;
     h += `</header><main id="main"></main>
       <nav class="tabs">${tabs.map(t => `<button data-tab="${t}" class="${S.tab === t ? 'on' : ''}" aria-label="${NOMTAB[t]}">${ICON[t]}<span>${NOMTAB[t]}</span></button>`).join('')}</nav>`;
     document.getElementById('app').innerHTML = h;
@@ -1797,6 +4320,9 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     window.scrollTo(0, mantenerScroll ? y : 0);
   }
   /* ---------- app instalada: datos en este dispositivo + copia de seguridad ---------- */
+  const fHora = iso => { if (!iso) return '—'; const d = new Date(iso); return fCorta(U.iso(d)) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  function chipNube() { const n = NB.pendientes(); const t = NB.enviando ? 'Enviando…' : NB.estado === 'error' ? (n ? n + ' sin enviar' : 'Error') : n ? n + ' por enviar' : 'En GitHub'; return `<button class="sync ${NB.estado === 'error' || (n && !NB.enviando) ? 'pend' : ''} ${NB.enviando ? 'girando' : ''}" id="btnNube"><b></b>${t}</button>`; }
+  function lineaNube() { const u = (DB.local.meta.nube || {}).ultima; return NB.estado === 'error' ? NB.error : 'guardado en GitHub · ' + (u ? 'último envío ' + fHora(u) : 'sin envíos todavía'); }
   function chipCopia() { const d = DB.diasSinCopia(), c = DB.cambiosDesdeCopia(), tiene = !!DB.local.meta.ultimaCopia; const mal = c > 0 && (!tiene || d >= 7); return `<button class="sync ${mal ? 'pend' : ''}" id="btnCopia"><b></b>${!c ? 'Copia al día' : tiene ? `${c} sin copia` : 'Sin copia'}</button>`; }
   function lineaCopia() { const u = DB.local.meta.ultimaCopia; return 'guardado en este dispositivo · ' + (u ? 'última copia ' + fCorta(u.slice(0, 10)) : 'sin copia de seguridad'); }
   function avisoCopia() { const d = DB.diasSinCopia(), c = DB.cambiosDesdeCopia(); if (!c || d < 7) return ''; return DB.local.meta.ultimaCopia ? `Hace ${d} días que no hacés una copia de seguridad` : 'Todavía no hiciste ninguna copia de seguridad'; }
@@ -1807,9 +4333,15 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
       <div class="card" style="margin:0 0 12px"><div class="fila-kv"><span>Última copia</span><b>${u ? fLarga(u.slice(0, 10)) + ' ' + u.slice(11, 16) : 'Nunca'}</b></div><div class="fila-kv"><span>Cambios sin copia</span><b>${c}</b></div><div class="fila-kv"><span>Espacio usado</span><b id="espUso">calculando…</b></div><div class="fila-kv"><span>Versión</span><b>${VERSION}</b></div></div>
       <button class="btn" id="cpExp">Exportar copia</button><div style="height:8px"></div>
       <button class="btn out" id="cpImp">Restaurar una copia</button><input type="file" id="cpFile" accept=".json,application/json" style="display:none">
-      ${adm ? `<div class="grp" style="margin-top:20px">Datos de prueba</div>
+      ${adm && NB ? seccionNube() : ''}
+      ${adm && !(NB && NB.conectado()) ? `<div class="grp" style="margin-top:20px">Datos de prueba</div>
       ${DB.local.meta.sinDemo ? '<div class="sub">Ya estás usando tus propios alumnos.</div>' : `<div class="sub" style="margin-bottom:8px">La app arrancó con 8 alumnos y 3 meses de historia de prueba. Quitalos para empezar con tus alumnos reales: quedan los ejercicios, las rutinas y las clases (sin alumnos).</div><button class="btn out" id="cpSinDemo">Quitar alumnos de prueba</button>`}
       <div style="height:8px"></div><button class="btn gris" id="cpReset">Borrar todo y volver a los datos de prueba</button>` : ''}`, v => {
+      const nc = v.querySelector('#nbCon'); if (nc) nc.onclick = () => { v.remove(); conectarNube(); };
+      const ne = v.querySelector('#nbEnv'); if (ne) ne.onclick = () => { v.remove(); NB.enviar().then(() => toast(NB.estado === 'ok' ? 'Datos enviados a GitHub' : NB.error)); };
+      const nk = v.querySelector('#nbClave'); if (nk) nk.onclick = () => { v.remove(); mostrarClave(DB.local.meta.github.clave, false); };
+      const nt = v.querySelector('#nbTok'); if (nt) nt.onclick = () => { v.remove(); hoja(`<div class="tag">GitHub</div><h3>Cambiar token</h3><div class="sub" style="margin:4px 0 12px">Pegá el token nuevo (mismo repositorio, Contents: Read and write). Tus datos y los accesos de los alumnos no cambian.</div><div class="f"><input id="ntTok" type="password" placeholder="github_pat_…" autocapitalize="off" autocomplete="off"></div><div id="ntErr" style="color:var(--crit);font-size:13px;min-height:18px"></div><button class="btn" id="ntOk">Probar y guardar</button>`, w => { w.querySelector('#ntOk').onclick = () => { const t = w.querySelector('#ntTok').value.trim(); w.querySelector('#ntOk').disabled = true; NB.cambiarToken(t).then(() => { w.remove(); render(); toast('Token actualizado'); }, e => { w.querySelector('#ntOk').disabled = false; w.querySelector('#ntErr').textContent = NB.mensajeError(e); }); }; }); };
+      const nd = v.querySelector('#nbDes'); if (nd) nd.onclick = () => { if (!confirm('¿Desconectar este celular de GitHub? Los datos siguen en el celular y en GitHub; los alumnos siguen viendo lo último enviado.')) return; NB.desconectar(); v.remove(); render(); toast('Desconectado de GitHub'); };
       if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(e => { const el = v.querySelector('#espUso'); if (el) el.textContent = (e.usage / 1048576).toFixed(1) + ' MB'; }).catch(() => { }); else v.querySelector('#espUso').textContent = '—';
       v.querySelector('#cpExp').onclick = () => exportarCopia().then(() => { v.remove(); });
       v.querySelector('#cpImp').onclick = () => v.querySelector('#cpFile').click();
@@ -1817,6 +4349,71 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
       const sd = v.querySelector('#cpSinDemo'); if (sd) sd.onclick = () => { if (!confirm('¿Quitar los 8 alumnos de prueba y toda su historia? Te conviene exportar una copia antes. Esta acción no se puede deshacer.')) return; borradores = {}; sesInicio = null; DB.quitarDemo(S.yo).then(() => { v.remove(); S.claseSel = null; guardar(); render(); toast('Listo: cargá tus alumnos en Clases y alumnos'); }); };
       const rs = v.querySelector('#cpReset'); if (rs) rs.onclick = () => { if (!confirm('¿Borrar todo lo cargado en este dispositivo y volver a los datos de prueba? Esta acción no se puede deshacer.')) return; borradores = {}; sesInicio = null; DB.reiniciarDemo().then(() => { v.remove(); S.claseSel = null; guardar(); render(); toast('Datos de prueba restablecidos'); }); };
     });
+  }
+  function seccionNube() {
+    if (!NB.conectado()) return `<div class="grp" style="margin-top:20px">GitHub</div><div class="sub" style="margin-bottom:8px">Conectá este celular con tu repositorio para guardar todo cifrado en GitHub y darles acceso a tus alumnos con un link o QR.</div><button class="btn" id="nbCon">Conectar con GitHub</button>`;
+    const g = DB.local.meta.github, nb = DB.local.meta.nube || {}, acc = Object.keys(NB.accesos()).length;
+    return `<div class="grp" style="margin-top:20px">GitHub</div><div class="card" style="margin:0 0 10px"><div class="fila-kv"><span>Repositorio</span><b>${esc(g.owner + '/' + g.repo)}</b></div><div class="fila-kv"><span>Último envío</span><b>${fHora(nb.ultima)}</b></div><div class="fila-kv"><span>Por enviar</span><b>${NB.pendientes()}</b></div><div class="fila-kv"><span>Alumnos con acceso</span><b>${acc}</b></div>${NB.estado === 'error' ? `<div class="sub" style="color:var(--crit);margin-top:6px">${esc(NB.error)}</div>` : ''}</div>
+      <button class="btn" id="nbEnv">Enviar ahora</button><div style="height:8px"></div><button class="btn out" id="nbClave">Ver clave de recuperación</button><div style="height:8px"></div><button class="btn out" id="nbTok">Cambiar token (cuando vence)</button><div style="height:8px"></div><button class="btn gris" id="nbDes">Desconectar este celular</button>`;
+  }
+  function mostrarClave(clave, primera) {
+    hoja(`<div class="tag">Muy importante</div><h3>Clave de recuperación</h3><div class="sub" style="margin:4px 0 12px">Con esta clave y tu token recuperás todos tus datos desde GitHub si cambiás o perdés el celular. Guardala fuera del celular (en tu PC, en un papel o en un gestor de contraseñas). Sin ella, los datos de GitHub no se pueden leer.</div>
+      <div class="clave-rec" id="ckTxt">${esc(clave)}</div><button class="btn out" id="ckCop">Copiar clave</button><div style="height:8px"></div>${primera ? '<button class="btn" id="ckOk">Ya la guardé</button>' : '<button class="btn" data-cerrar>Cerrar</button>'}`, v => {
+      v.querySelector('#ckCop').onclick = () => { (navigator.clipboard ? navigator.clipboard.writeText(clave) : Promise.reject()).then(() => toast('Clave copiada'), () => toast('Mantené apretada la clave para copiarla')); };
+      const ok = v.querySelector('#ckOk'); if (ok) ok.onclick = () => { v.remove(); render(); };
+    });
+  }
+  function conectarNube() {
+    const sug = NB.repoDesdeUrl() || 'JulianGarciaCSL/mbi-k7q42';
+    hoja(`<div class="tag">GitHub</div><h3>Conectar con GitHub</h3><div class="sub" style="margin:4px 0 12px">Pegá el token fine-grained que creaste para este repositorio (permiso Contents: Read and write). Queda guardado solo en este celular.</div>
+      <div class="f"><label>Repositorio (usuario/repo)</label><input id="ghRepo" value="${esc(sug)}" autocapitalize="off" autocomplete="off"></div>
+      <div class="f"><label>Token</label><input id="ghTok" type="password" placeholder="github_pat_…" autocapitalize="off" autocomplete="off"></div>
+      <div id="ghPaso2"></div><div id="ghErr" style="color:var(--crit);font-size:13px;min-height:18px;margin-top:6px"></div>
+      <button class="btn" id="ghOk">Probar conexión</button>`, v => {
+      const err = t => v.querySelector('#ghErr').textContent = t, btn = v.querySelector('#ghOk');
+      let info = null;
+      btn.onclick = async () => {
+        const [owner, repo] = v.querySelector('#ghRepo').value.trim().replace(/^https?:\/\/github\.com\//, '').split('/'), token = v.querySelector('#ghTok').value.trim();
+        if (!owner || !repo) return err('Escribí usuario/repositorio'); if (!/^(github_pat_|ghp_)/.test(token)) return err('El token empieza con github_pat_');
+        err(''); btn.disabled = true;
+        try {
+          if (!info) {
+            btn.textContent = 'Probando…'; info = await NB.probar(owner, repo, token);
+            if (info.existe) { v.querySelector('#ghPaso2').innerHTML = `<div class="nota" style="margin:6px 0">Conexión correcta. Este repositorio ya tiene datos de MADEBE: ingresá tu clave de recuperación para traerlos a este celular (reemplazan lo que hay acá).</div><div class="f"><label>Clave de recuperación</label><input id="ghClave" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocomplete="off"></div>`; btn.textContent = 'Recuperar mis datos'; btn.disabled = false; return; }
+            v.querySelector('#ghPaso2').innerHTML = `<div class="nota" style="margin:6px 0">Conexión correcta${info.publico ? '' : ''}. Se va a generar tu clave de recuperación y se suben tus datos cifrados.</div>`; btn.textContent = 'Conectar y enviar'; btn.disabled = false; return;
+          }
+          if (info.existe) {
+            const clave = (v.querySelector('#ghClave').value || '').trim(); if (NB.normalizarClave(clave).length !== 24) { btn.disabled = false; return err('La clave tiene 24 letras y números'); }
+            btn.textContent = 'Recuperando…'; await NB.conectar(owner, repo, token, clave, true);
+            v.remove(); borradores = {}; S.claseSel = null; guardar(); render(); toast('Datos recuperados desde GitHub');
+          } else {
+            const clave = NB.claveRecuperacion(); btn.textContent = 'Enviando…'; await NB.conectar(owner, repo, token, clave, false);
+            v.remove(); render(); mostrarClave(clave, true); toast(NB.estado === 'ok' ? 'Conectado: datos enviados a GitHub' : NB.error);
+          }
+        } catch (e) { btn.disabled = false; btn.textContent = info ? (info.existe ? 'Recuperar mis datos' : 'Conectar y enviar') : 'Probar conexión'; err(NB.mensajeError(e)); }
+      };
+    });
+  }
+  /* acceso del alumno: link + QR con su clave */
+  function hojaAcceso(u) {
+    const al = C.usr[u]; if (!al) return;
+    if (!NB || !NB.conectado()) return hoja(`<h3>Acceso de ${esc(nom1(u))}</h3><div class="sub" style="margin:4px 0 12px">Para que tus alumnos vean su progreso en su celular, primero conectá este celular con GitHub.</div><button class="btn" id="acCon">Conectar con GitHub</button>`, v => { v.querySelector('#acCon').onclick = () => { v.remove(); conectarNube(); }; });
+    let a = NB.accesos()[u];
+    const pinta = v => {
+      a = NB.accesos()[u]; const cont = v.querySelector('#acCont');
+      if (!a) { cont.innerHTML = `<div class="sub" style="margin-bottom:12px">Generá un link y un QR personal para ${esc(nom1(u))}. Con eso instala la app y ve solo su información, sin contraseña.</div><button class="btn" id="acGen">Generar acceso</button>`; v.querySelector('#acGen').onclick = () => { NB.crearAcceso(u); pinta(v); NB.enviar().then(() => pinta(v)); }; return; }
+      const link = NB.linkAlumno(a), qr = window.QRGEN(0, 'M'); qr.addData(link); qr.make();
+      const listo = !!a.subido;
+      cont.innerHTML = `<div class="qr-box">${qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true })}</div>
+        <div class="sub" style="text-align:center;margin:8px 0 12px">${listo ? '✓ Listo para usar · ' + (a.renovado ? 'renovado ' : 'creado ') + fCorta((a.renovado || a.creado).slice(0, 10)) : 'Subiendo a GitHub… (puede tardar 1–2 minutos en quedar disponible)'}</div>
+        <button class="btn" id="acComp">Enviar link</button><div style="height:8px"></div><button class="btn out" id="acCop">Copiar link</button><div style="height:8px"></div><button class="btn gris" id="acRen">Renovar acceso (el anterior deja de funcionar)</button>
+        <div class="sub" style="margin-top:12px">Que lo escanee con la cámara del iPhone, lo abra en Safari y toque Compartir › Agregar a inicio. No lo compartas: quien tenga el link ve los datos de ${esc(nom1(u))}.</div>`;
+      const msg = `Hola ${nom1(u)}! Este es tu acceso a MADEBE Integral para ver tus clases y tu progreso: ${link}\nAbrilo en Safari y tocá Compartir › Agregar a inicio. Es personal, no lo compartas.`;
+      v.querySelector('#acComp').onclick = () => { if (navigator.share) navigator.share({ title: 'MADEBE Integral', text: msg }).catch(() => { }); else (navigator.clipboard ? navigator.clipboard.writeText(msg) : Promise.reject()).then(() => toast('Mensaje copiado')); };
+      v.querySelector('#acCop').onclick = () => (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(() => toast('Link copiado'), () => toast('No se pudo copiar'));
+      v.querySelector('#acRen').onclick = () => { if (!confirm(`¿Renovar el acceso de ${nom1(u)}? El link y QR actuales dejan de funcionar.`)) return; NB.crearAcceso(u); pinta(v); NB.enviar().then(() => pinta(v)); };
+    };
+    hoja(`<div class="tag">Acceso del alumno</div><h3>${esc(al.nombre)}</h3><div id="acCont"></div>`, v => { pinta(v); const f = () => { if (document.body.contains(v)) pinta(v); }; NB.alCambiar(f); });
   }
   function exportarCopia() {
     const nombre = `madebe_copia_${U.hoy()}.json`, txt = JSON.stringify(DB.copia());
@@ -1838,6 +4435,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     r.readAsText(f);
   }
   function refrescarSync() {
+    if (LOCAL && NB && NB.conectado()) { const b = $('#btnNube'); if (b) b.outerHTML = chipNube(); const il = $('#infoLinea'); if (il) il.textContent = `MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${lineaNube()}`; return; }
     if (LOCAL) { const b = $('#btnCopia'); if (b) b.outerHTML = chipCopia(); const il = $('#infoLinea'); if (il) il.textContent = `MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${lineaCopia()}`; return; }
     const b = $('#btnSync'); if (!b) return; const pend = DB.pendientes();
     b.className = 'sync' + (pend ? ' pend' : ''); b.innerHTML = `<b></b>${pend ? pend + ' por enviar' : 'Sincronizado'}`;
@@ -2532,7 +5130,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
       <div class="f"><label>Nombre y apellido</label><input id="aNom" value="${u ? esc(u.nombre) : ''}" placeholder="Nombre del alumno"></div>
       <div class="f"><label>Clase habitual</label><div class="chipsel" id="aGrp"><button data-v="" class="${!u || !u.grupo || C.grp[u.grupo].tipo !== 'habitual' ? 'on' : ''}">Sin clase habitual</button>${hab.map(g => `<button data-v="${g.id}" class="${u && u.grupo === g.id ? 'on' : ''}">${esc(g.nombre)}</button>`).join('')}</div></div>
       ${nuevo ? '<div class="sub">Entra con la contraseña inicial de la demo (1234). En la versión real el conversor genera su clave.</div>' : `<div class="f"><label>Clases personalizadas</label>${pers.length ? pers.map(g => `<button class="opc" data-editar-grupo="${g.id}" data-cerrar>${esc(g.nombre)}</button>`).join('') : '<div class="sub">No tiene.</div>'}<button class="btn out" data-nuevo-personal="${u.usuario}" data-cerrar style="margin-top:8px">+ Clase personalizada</button></div>
-      <div class="sub">También puede participar de todas las clases especiales.</div>`}
+      <div class="sub">También puede participar de todas las clases especiales.</div>${LOCAL ? `<div class="f" style="margin-top:12px"><label>Acceso a la app</label><button class="btn out" data-acceso-alumno="${u.usuario}" data-cerrar>${NB && NB.accesos()[u.usuario] ? 'Ver link y QR de acceso' : 'Generar link y QR de acceso'}</button></div>` : ''}`}
       <div style="height:14px"></div><button class="btn" id="aOk">${nuevo ? 'Agregar alumno' : 'Guardar cambios'}</button>
       ${nuevo ? '' : '<div style="height:8px"></div><button class="btn gris" id="aBaja">Dar de baja al alumno</button>'}`, v => {
       v.querySelectorAll('#aGrp button').forEach(b => b.onclick = () => v.querySelectorAll('#aGrp button').forEach(x => x.classList.toggle('on', x === b)));
@@ -2546,7 +5144,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
         borradores = {}; v.remove(); refrescarSync(); pintarTab(true); toast(nuevo ? 'Alumno agregado' : 'Alumno actualizado');
       };
       const baja = v.querySelector('#aBaja');
-      if (baja) baja.onclick = () => { if (!confirm(`¿Dar de baja a ${u.nombre}? Sale de sus clases; su historial se conserva.`)) return; DB.asignarHabitual(u.usuario, '', S.yo); pers.forEach(g => DB.guardarGrupo(Object.assign(JSON.parse(JSON.stringify(g)), { activo: false, alumnos: [] }), S.yo)); DB.guardarAlumno({ usuario: u.usuario, activo: false }, S.yo); borradores = {}; v.remove(); refrescarSync(); pintarTab(true); toast('Alumno dado de baja'); };
+      if (baja) baja.onclick = () => { if (!confirm(`¿Dar de baja a ${u.nombre}? Sale de sus clases; su historial se conserva.`)) return; DB.asignarHabitual(u.usuario, '', S.yo); pers.forEach(g => DB.guardarGrupo(Object.assign(JSON.parse(JSON.stringify(g)), { activo: false, alumnos: [] }), S.yo)); DB.guardarAlumno({ usuario: u.usuario, activo: false }, S.yo); if (NB) NB.quitarAcceso(u.usuario); borradores = {}; v.remove(); refrescarSync(); pintarTab(true); toast('Alumno dado de baja'); };
     });
   }
   function vistaAlumnos(m) {
@@ -2598,6 +5196,8 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     const t = e.target.closest('button, [data-tab]'); if (!t) return;
     const d = t.dataset;
     if (d.perfil) return pedirPass(d.perfil);
+    if (d.tipoIng === 'alumno' && LOCAL && NB && !NB.conectado() && DB.local.meta.sinDemo) return pegarLink();
+    if (d.linkAlumno !== undefined) return pegarLink();
     if (d.tipoIng) { tipoIng = d.tipoIng; pasoIng = 'perfiles'; vistaLogin(); window.scrollTo(0, 0); return; }
     if (d.volverIng !== undefined) { pasoIng = 'tipo'; vistaLogin(); return; }
     if (d.tab) { S.tab = d.tab; mover = null; agregar = null; guardar(); render(); return; }
@@ -2606,11 +5206,15 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     if (d.verEj) { S.ejSel = d.verEj; S.subP = 'evolucion'; S.tab = 'progreso'; guardar(); render(); return; }
     if (d.verMus !== undefined) { S.musSel = d.verMus || null; S.subM = 'mapa'; render(); return; }
     if (t.id === 'btnSync') return sincronizar();
-    if (t.id === 'btnCopia' || d.copia !== undefined) return hojaCopia();
+    if (t.id === 'btnCopia' || d.copia !== undefined || t.id === 'btnNube') { if (t.id === 'btnNube' && NB.pendientes() && !NB.enviando) { NB.enviar().then(() => toast(NB.estado === 'ok' ? 'Datos enviados a GitHub' : NB.error)); refrescarSync(); return; } return hojaCopia(); }
+    if (t.id === 'btnActAlu') { iniciarAlumno(DB.local.meta.alumno).then(ok => { render(); toast(ok ? 'Datos actualizados' : errorAlumno); }); render(); return; }
+    if (d.accesoAlumno) return setTimeout(() => hojaAcceso(d.accesoAlumno), 50);
     if (t.id === 'btnYo') return hoja(`<div style="width:150px;margin:2px 0 14px">${MARCA.logo({ fg: '#1E2125', bg: '#F4F5F7' })}</div><h3>${esc(yo().nombre)}</h3><div style="color:var(--ink2);margin:4px 0 16px">${{ admin: 'Administrador', profesor: 'Profesor', alumno: 'Alumno' }[yo().rol]}</div>
-        ${esAdmin() ? `<button class="tog ${vistaPrevia() ? 'on' : ''}" id="btnPrev" style="margin:0 0 14px"><span class="sw"></span>Vista previa del ranking (v2.0) en Alumnos</button>` : ''}<button class="btn" id="btnSalir" data-cerrar>Cambiar de perfil</button><div style="height:10px"></div>${LOCAL ? (esProfe() ? '<button class="btn out" id="btnDatos" data-cerrar>Copia de seguridad y datos</button>' : '') : '<button class="btn out" id="btnReset" data-cerrar>Reiniciar datos demo</button>'}${firma('oscura')}`, v => {
+        ${esAdmin() ? `<button class="tog ${vistaPrevia() ? 'on' : ''}" id="btnPrev" style="margin:0 0 14px"><span class="sw"></span>Vista previa del ranking (v2.0) en Alumnos</button>` : ''}${modoAlumno() ? `<div class="sub" style="margin:-6px 0 14px">Tu información la carga ${esc(DB.local.meta.alumno.profesor || 'tu profesor')}. Última actualización: ${fHora(DB.local.meta.alumno.generado)}.</div><button class="btn" id="btnActu" data-cerrar>Actualizar mis datos</button><div style="height:10px"></div><button class="btn gris" id="btnOlvidar" data-cerrar>Quitar mi acceso de este celular</button>` : `<button class="btn" id="btnSalir" data-cerrar>Cambiar de perfil</button>`}<div style="height:10px"></div>${modoAlumno() ? '' : LOCAL ? (esProfe() ? '<button class="btn out" id="btnDatos" data-cerrar>Copia de seguridad y datos</button>' : '') : '<button class="btn out" id="btnReset" data-cerrar>Reiniciar datos demo</button>'}${firma('oscura')}`, v => {
       const pv = v.querySelector('#btnPrev'); if (pv) pv.onclick = () => { const on = !vistaPrevia(); try { localStorage.setItem(PREF + '_ranking', on ? '1' : '0'); } catch (e) { } pv.classList.toggle('on', on); render(); };
-      v.querySelector('#btnSalir').onclick = () => { S.yo = null; pasoIng = 'tipo'; guardar(); render(); };
+      const bsal = v.querySelector('#btnSalir'); if (bsal) bsal.onclick = () => { S.yo = null; pasoIng = 'tipo'; guardar(); render(); };
+      const bact = v.querySelector('#btnActu'); if (bact) bact.onclick = () => iniciarAlumno(DB.local.meta.alumno).then(ok => { render(); toast(ok ? 'Datos actualizados' : errorAlumno); });
+      const bolv = v.querySelector('#btnOlvidar'); if (bolv) bolv.onclick = () => { if (!confirm('¿Quitar tu acceso de este celular? Para volver a entrar vas a necesitar tu link o QR.')) return; NB.olvidarAcceso().then(() => { S.yo = null; pasoIng = 'tipo'; guardar(); location.hash = ''; render(); }); };
       const bd = v.querySelector('#btnDatos'); if (bd) bd.onclick = () => setTimeout(hojaCopia, 50);
       const brs = v.querySelector('#btnReset'); if (brs) brs.onclick = () => { borradores = {}; sesInicio = null; DB.reiniciarDemo(); guardar(); render(); toast('Datos demo reiniciados'); };
     });
@@ -2681,6 +5285,14 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
 
   /* ================= INICIO ================= */
   DB.cargar();
+  if (LOCAL && NB) {
+    NB.alCambiar(() => { if (S.yo && $('header.top')) refrescarSync(); });
+    const fr = NB.leerFragmento();
+    if (fr && NB.conectado()) setTimeout(() => toast('Este es el celular del profesor: el link de alumno no se aplica acá'), 1200);
+    else if (fr) iniciarAlumno(fr);
+    else if (NB.esAlumno()) iniciarAlumno(DB.local.meta.alumno);
+    if (NB.conectado() && NB.pendientes()) NB.programar(5000);
+  }
   G.initTooltip();
   vistaLogin(); // siempre arranca con la animación de marca; Ingresar entra directo si ya hay sesión
 })();
