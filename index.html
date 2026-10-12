@@ -478,7 +478,7 @@ textarea.notas{width:100%;border:0;border-radius:14px;padding:12px;min-height:70
 </head>
 <body>
 <div id="app"></div>
-<script>window.APP_VERSION='v0.1.1';</script>
+<script>window.APP_VERSION='v0.1.2';</script>
 <script>/* App instalada (PWA): los datos viven en este dispositivo (IndexedDB). Se leen antes de arrancar la app
    y se guardan unos instantes después de cada cambio (y al pasar a segundo plano). */
 (function () {
@@ -968,7 +968,15 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
   const KEY = MODO === 'local' ? 'madebe_local_v1' : 'calistenia_demo_v9';
   const COLS = ['ses', 'ser', 'cla', 'rut', 'ejn', 'ejv', 'grp', 'usr', 'niv', 'asi', 'log', 'seq', 'pts'];
   function vacio() { const o = { meta: {} }; COLS.forEach(c => o[c] = []); return o; }
-  function normal(x) { const o = Object.assign(vacio(), x || {}); COLS.forEach(c => { if (!Array.isArray(o[c])) o[c] = []; }); if (!o.meta || typeof o.meta !== 'object') o.meta = {}; return o; }
+  function reparar(o) {
+    const m = new Map(); o.usr.forEach(u => { if (!u || !u.usuario) return; u.id = u.usuario; m.set(u.usuario, u); }); o.usr = [...m.values()];
+    if (o.meta.sinDemo) BASE.USR.filter(u => u.rol === 'alumno').forEach(u => { const x = m.get(u.usuario); if (!x || (x.nombre === u.nombre && !x.bor && !x.alta)) { if (x) o.usr.splice(o.usr.indexOf(x), 1); o.usr.push(Object.assign({}, u, { id: u.usuario, bor: true, mod: new Date().toISOString() })); } });
+    const existe = new Set(BASE.USR.map(u => u.usuario).concat(o.usr.filter(u => !u.bor).map(u => u.usuario)));
+    o.usr.filter(u => u.bor).forEach(u => existe.delete(u.usuario));
+    o.grp.forEach(g => { if (Array.isArray(g.alumnos)) g.alumnos = g.alumnos.filter(a => existe.has(a)); });
+    return o;
+  }
+  function normal(x) { const o = Object.assign(vacio(), x || {}); COLS.forEach(c => { if (!Array.isArray(o[c])) o[c] = []; }); if (!o.meta || typeof o.meta !== 'object') o.meta = {}; return reparar(o); }
   function leerLocal() {
     if (MODO === 'local' && window.__IDB) return normal(window.__IDB.inicial);
     try { return normal(JSON.parse(localStorage.getItem(KEY))); } catch (e) { return vacio(); }
@@ -1027,6 +1035,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
   };
   DB.upsert = function (tipo, obj, silencioso) {
     obj.mod = new Date().toISOString(); obj.sync = 'pend';
+    if (tipo === 'usr') obj.id = obj.usuario;
     const loc = DB.local[tipo]; const i = loc.findIndex(x => x.id === obj.id);
     if (i >= 0) loc[i] = obj; else loc.push(obj);
     if (tipo === 'niv') { const j = DB.nivHist.findIndex(x => x.id === obj.id); if (j >= 0) DB.nivHist[j] = obj; else DB.nivHist.push(obj); DB.nivHist.sort((a, b) => a.desde.localeCompare(b.desde)); }
@@ -1056,7 +1065,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     L.ses = L.ses.filter(x => !demo.has(x.u)); L.ser = L.ser.filter(x => !demo.has(x.u)); L.asi = L.asi.filter(x => !demo.has(x.u)); L.niv = L.niv.filter(x => !demo.has(x.u)); L.pts = []; L.log = [];
     const conAsi = new Set(L.asi.map(x => x.clase));
     L.cla = L.cla.filter(c => conAsi.has(c.id) || (c.est === 'plan' && c.extra && c.f >= U.hoy()));
-    L.usr = L.usr.filter(u => !demo.has(u.usuario)).concat(BASE.USR.filter(u => demo.has(u.usuario)).map(u => Object.assign({}, u, { bor: true })));
+    L.usr = L.usr.filter(u => !demo.has(u.usuario)).concat(BASE.USR.filter(u => demo.has(u.usuario)).map(u => Object.assign({}, u, { id: u.usuario, bor: true, mod: new Date().toISOString() })));
     C.reindex(L.ejn, L.rut, seqLocal(), L.ejv, L.grp, L.usr);
     const grp = new Map(L.grp.map(g => [g.id, g]));
     C.GRUPOS.forEach(g => { const keep = g.alumnos.filter(a => !demo.has(a)); if (keep.length !== g.alumnos.length || !grp.has(g.id)) grp.set(g.id, Object.assign(JSON.parse(JSON.stringify(g)), { alumnos: keep })); });
@@ -1078,7 +1087,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
   DB.nombreHora = h => h.endsWith(':00') ? String(+h.slice(0, 2)) + ' h' : String(+h.slice(0, 2)) + h.slice(2) + ' h';
   DB.nombreGrupo = g => (g.tipo === 'especial' ? 'Especial · ' : g.tipo === 'personal' ? 'Personal · ' + ((C.usr[g.alumnos[0]] || {}).nombre || '').split(' ')[0] + ' · ' : '') + DB.nombreDias(g.dias) + ' ' + DB.nombreHora(g.hora);
   DB.guardarAlumno = function (u, actor) {
-    const nuevo = !C.usr[u.usuario]; const base = Object.assign({ rol: 'alumno', activo: true, ranking: false, profesor: (C.USUARIOS.find(x => x.rol === 'profesor' && x.activo) || {}).usuario || actor }, C.usr[u.usuario] ? JSON.parse(JSON.stringify(C.usr[u.usuario])) : {}, u);
+    const nuevo = !C.usr[u.usuario]; const base = Object.assign({ alta: nuevo ? U.hoy() : undefined, rol: 'alumno', activo: true, ranking: false, profesor: (C.USUARIOS.find(x => x.rol === 'profesor' && x.activo) || {}).usuario || actor }, C.usr[u.usuario] ? JSON.parse(JSON.stringify(C.usr[u.usuario])) : {}, u);
     ['grupo', 'personales', 'dias_obj'].forEach(k => delete base[k]);
     DB.upsert('usr', base, true);
     DB.registrar(actor, nuevo ? 'alumno_alta' : 'alumno', { u: base.usuario, txt: nuevo ? 'Alumno dado de alta' : (base.activo ? 'Datos del alumno actualizados' : 'Alumno dado de baja') });

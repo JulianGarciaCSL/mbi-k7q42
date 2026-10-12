@@ -1,6 +1,6 @@
 /* MADEBE Integral · service worker. La app es un único HTML: se guarda en caché para abrir sin internet.
    Los datos NO pasan por acá: viven en IndexedDB del dispositivo. */
-const VERSION = 'v0.1.1';
+const VERSION = 'v0.1.2';
 const CACHE = 'madebe-' + VERSION;
 const ARCHIVOS = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/maskable-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS))); });
