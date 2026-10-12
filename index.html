@@ -484,7 +484,7 @@ textarea.notas{width:100%;border:0;border-radius:14px;padding:12px;min-height:70
 </head>
 <body>
 <div id="app"></div>
-<script>window.APP_VERSION='v0.2';</script>
+<script>window.APP_VERSION='v0.2.1';</script>
 <script>/* App instalada (PWA): los datos viven en este dispositivo (IndexedDB). Se leen antes de arrancar la app
    y se guardan unos instantes después de cada cambio (y al pasar a segundo plano). */
 (function () {
@@ -695,7 +695,7 @@ window.CATALOGO = {
   },
   USUARIOS: [
     // usuario, nombre, rol (admin | profesor | alumno), profesor, activo, ranking (consiente aparecer en el ranking v2.0)
-    { usuario: 'julian', nombre: 'Julián', rol: 'admin', profesor: '', activo: true },
+    { usuario: 'julian', nombre: 'Julián', rol: 'admin', profesor: '', activo: true, clave: '5555' },
     { usuario: 'profe', nombre: 'Julián', rol: 'profesor', profesor: '', activo: true },
     { usuario: 'ana', nombre: 'Ana López', rol: 'alumno', profesor: 'profe', activo: true, ranking: true },
     { usuario: 'diego', nombre: 'Diego Fernández', rol: 'alumno', profesor: 'profe', activo: true, ranking: true },
@@ -1047,6 +1047,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     DB.asiPorClase = {}; DB.asi.forEach(x => { if (!x.bor) (DB.asiPorClase[x.clase] = DB.asiPorClase[x.clase] || {})[x.u] = x; });
   };
   DB.upsert = function (tipo, obj, silencioso) {
+    if (DB.local.meta.supervisor) return; // supervisión: solo lectura
     obj.mod = new Date().toISOString(); obj.sync = 'pend';
     if (tipo === 'usr') obj.id = obj.usuario;
     const loc = DB.local[tipo]; const i = loc.findIndex(x => x.id === obj.id);
@@ -1077,7 +1078,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     return guardarLocal(DB.local);
   };
   /* copia de DB.local sin secretos del dispositivo (token de GitHub y clave de recuperación) */
-  DB.limpio = function () { const o = Object.assign({}, DB.local), m = Object.assign({}, o.meta); delete m.github; delete m.nube; delete m.alumno; o.meta = m; return o; };
+  DB.limpio = function () { const o = Object.assign({}, DB.local), m = Object.assign({}, o.meta); delete m.github; delete m.nube; delete m.alumno; delete m.supervisor; o.meta = m; return o; };
   /* reemplaza todo lo local (restaurar desde GitHub o datos del alumno) conservando lo que se indique de meta */
   DB.reemplazar = function (datos, metaExtra) { DB.local = normal(JSON.parse(JSON.stringify(datos))); Object.assign(DB.local.meta, metaExtra || {}); const p = guardarLocal(DB.local); DB.cargar(); return p; };
   DB.guardarMeta = () => guardarLocal(DB.local);
@@ -1362,6 +1363,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
   const cfg = () => DB.local.meta.github || null;
   N.conectado = () => !!(cfg() && cfg().token && cfg().clave);
   N.esAlumno = () => !!DB.local.meta.alumno;
+  N.soloLectura = () => !!(DB.local.meta.alumno || DB.local.meta.supervisor);
   N.repoDesdeUrl = () => { const m = location.hostname.match(/^([^.]+)\.github\.io$/i), r = location.pathname.split('/').filter(Boolean)[0]; return m && r ? m[1] + '/' + r : ''; };
   const gh = (c, ruta, opt) => {
     opt = opt || {};
@@ -1373,7 +1375,7 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     });
   };
   const rep = c => `/repos/${c.owner}/${c.repo}`;
-  N.mensajeError = e => !e ? '' : e.status === 401 ? 'GitHub rechazó el token (vencido o mal copiado)' : e.status === 403 ? 'El token no tiene permiso de escritura en ese repositorio (Contents: Read and write)' : e.status === 404 ? 'No se encontró el repositorio (o el token no tiene acceso a él)' : e.status === 409 || e.status === 422 ? 'GitHub rechazó el envío; se reintenta' : e.tipo === 'clave' ? 'La clave de recuperación no es correcta' : e.status ? 'GitHub respondió ' + e.status + (e.msg ? ': ' + e.msg : '') : 'Sin conexión a internet';
+  N.mensajeError = e => !e ? '' : e.tipo === 'sindatos' ? 'Todavía no hay datos del profesor en GitHub' : e.tipo === 'red' ? 'Sin conexión a internet' : e.status === 401 ? 'GitHub rechazó el token (vencido o mal copiado)' : e.status === 403 ? 'El token no tiene permiso de escritura en ese repositorio (Contents: Read and write)' : e.status === 404 ? 'No se encontró el repositorio (o el token no tiene acceso a él)' : e.status === 409 || e.status === 422 ? 'GitHub rechazó el envío; se reintenta' : e.tipo === 'clave' ? 'La clave de recuperación no es correcta' : e.status ? 'GitHub respondió ' + e.status + (e.msg ? ': ' + e.msg : '') : 'Sin conexión a internet';
   /* probar token y repo */
   N.probar = async function (owner, repo, token) {
     const c = { owner, repo, token };
@@ -1495,6 +1497,19 @@ window.CUERPO = {"frente":{"vb":"0 0 724 1448","out":"M 309.48 168.91 Q 305.84 1
     return v;
   };
   N.olvidarAcceso = () => DB.reemplazar({}, {});
+
+  /* ---------- administrador: supervisión de los datos reales en SOLO LECTURA ----------
+     Baja datos/p.bin desde GitHub Pages (público, cifrado) y lo descifra con la clave de recuperación. No usa token: no puede escribir. */
+  N.supervisando = () => !!DB.local.meta.supervisor;
+  N.supervisar = async function (clave, silencioso) {
+    const r = await fetch('./datos/p.bin?t=' + Date.now(), { cache: 'no-store' });
+    if (r.status === 404) throw Object.assign(new Error('Todavía no hay datos del profesor en GitHub'), { tipo: 'sindatos' });
+    if (!r.ok) throw Object.assign(new Error('Sin conexión'), { tipo: 'red' });
+    const o = await N.descifrar(await r.text(), { pass: clave });
+    await DB.reemplazar(o.datos, { supervisor: { clave, generado: o.generado, bajado: new Date().toISOString() } });
+    return o;
+  };
+  N.dejarDeSupervisar = () => DB.reemplazar({}, {});
 
   /* al guardar o reindexar, el profesor conectado programa un envío (agrupa cambios 2 minutos) */
   const indexar0 = DB.indexar; DB.indexar = function () { indexar0.apply(DB, arguments); if (N.conectado() && !N.esAlumno() && DB.pendientes()) N.programar(); };
@@ -4207,7 +4222,29 @@ window.QRGEN = qrcode;
   /* ===== Ingreso: animación de marca → tipo de usuario → perfil → contraseña ===== */
   let pasoIng = 'splash', tipoIng = null, timerSplash = null, cargaAlumno = null, errorAlumno = '';
   window.S_YO = () => S.yo;
-  const NB = window.NUBE, modoAlumno = () => LOCAL && NB && NB.esAlumno();
+  const NB = window.NUBE, modoAlumno = () => LOCAL && NB && NB.esAlumno(), supervisa = () => LOCAL && NB && NB.supervisando();
+  let errorSup = '', cargaSup = null;
+  function actualizarSupervision() {
+    cargaSup = NB.supervisar(DB.local.meta.supervisor.clave).then(() => { cargaSup = null; errorSup = ''; if ($('header.top')) render(); return true; }, e => { cargaSup = null; errorSup = NB.mensajeError(e); if ($('header.top')) refrescarSync(); return false; });
+    return cargaSup;
+  }
+  function hojaSupervisar() {
+    hoja(`<div class="tag">Administrador</div><h3>Ver datos reales (solo lectura)</h3><div class="sub" style="margin:4px 0 12px">Baja lo último que subió el profesor a GitHub y lo muestra en este celular sin poder modificarlo. Reemplaza lo que haya acá (datos de prueba). Necesitás la clave de recuperación del profesor; no hace falta token.</div>
+      <div class="f"><label>Clave de recuperación</label><input id="svClave" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocapitalize="characters" autocomplete="off"></div><div id="svErr" style="color:var(--crit);font-size:13px;min-height:18px"></div>
+      <button class="btn" id="svOk">Ver datos del profesor</button>`, v => {
+      v.querySelector('#svOk').onclick = () => {
+        const c = v.querySelector('#svClave').value.trim(), b = v.querySelector('#svOk');
+        if (NB.normalizarClave(c).length !== 24) { v.querySelector('#svErr').textContent = 'La clave tiene 24 letras y números'; return; }
+        if (DB.local.meta.sinDemo && !confirm('Este celular tiene datos cargados a mano. Al ver los datos reales se reemplazan (exportá una copia antes si los necesitás). ¿Continuar?')) return;
+        b.disabled = true; b.textContent = 'Descargando…';
+        NB.supervisar(c).then(() => { v.remove(); borradores = {}; S.claseSel = null; S.yo = 'julian'; guardar(); render(); toast('Viendo los datos reales en solo lectura'); }, e => { b.disabled = false; b.textContent = 'Ver datos del profesor'; v.querySelector('#svErr').textContent = NB.mensajeError(e); });
+      };
+    });
+  }
+  /* en supervisión, las acciones que modifican datos se bloquean con un aviso */
+  const EDITA = '[data-guardar-asis],[data-estado],[data-todos],[data-abrir-alu],[data-nuevo-alumno],[data-nuevo-grupo],[data-editar-grupo],[data-nuevo-personal],[data-cambiar-rut],[data-suspender],[data-reactivar],[data-mover],[data-quitar-clase],[data-horario],[data-rut-cal],[data-arr],[data-nueva-rut],[data-editar-rut],[data-duplicar-rut],[data-crear-ej],[data-editar-ej],[data-editar-seq],[data-replanificar],#aOk,#aBaja,#gOk,#gBaja,#eeOk,#cpSinDemo,#cpReset,#cpImp,#nbCon';
+  document.addEventListener('click', e => { if (!supervisa()) return; const t = e.target.closest(EDITA); if (!t) return; e.stopPropagation(); e.preventDefault(); toast('Modo supervisión: solo lectura'); }, true);
+  document.addEventListener('pointerdown', e => { if (supervisa() && e.target.closest('[data-arr]')) { e.stopPropagation(); } }, true);
   /* alumno: baja su archivo de GitHub (al abrir y con "Actualizar"). Si no hay internet, usa lo último que bajó */
   function iniciarAlumno(acc) {
     errorAlumno = '';
@@ -4260,7 +4297,7 @@ window.QRGEN = qrcode;
         <button class="tipo" data-tipo-ing="profesor"><span class="ic">${MARCA.icono('brazo', { tam: 46 })}</span><span><b class="disp">Soy profesor</b><small>Rutinas, clases, asistencia y progreso de tus alumnos</small></span><span class="fl">›</span></button>
         <button class="tipo" data-tipo-ing="alumno"><span class="ic">${MARCA.icono('corredor', { tam: 46 })}</span><span><b class="disp">Soy alumno</b><small>Tus clases, los músculos que trabajaste y tu progreso</small></span><span class="fl">›</span></button>
         ${LOCAL ? '<button class="link-adm" data-link-alumno style="margin-top:4px">Tengo un link de acceso de alumno</button>' : ''}<button class="link-adm" data-tipo-ing="admin">Administración</button>
-        <div class="espacio"></div><div class="sub" style="text-align:center;font-size:11px;margin-top:20px">${LOCAL ? 'Los datos se guardan solo en este dispositivo. Contraseña inicial: 1234.' : 'En la versión real, la primera vez se pega la clave de acceso. En esta demo la contraseña es 1234.'}</div>${firma()}</div>`;
+        <div class="espacio"></div><div class="sub" style="text-align:center;font-size:11px;margin-top:20px">${LOCAL ? (NB && NB.supervisando() ? 'Modo supervisión: datos reales del profesor en solo lectura.' : 'Los datos se guardan solo en este dispositivo. Contraseña inicial: 1234.') : 'En la versión real, la primera vez se pega la clave de acceso. En esta demo la contraseña es 1234.'}</div>${firma()}</div>`;
       return;
     }
     const rol = tipoIng, tit = { profesor: C.USUARIOS.filter(u => u.rol === 'profesor' && u.activo).length > 1 ? 'Profesores' : 'Profesor', alumno: 'Alumnos', admin: 'Administración' }[rol];
@@ -4276,10 +4313,10 @@ window.QRGEN = qrcode;
     return `<button class="perfil" data-perfil="${u.usuario}"><span class="avatar" style="background:${avColor(u.usuario)};color:#fff">${ini(u.nombre)}</span><span>${esc(u.nombre)}<small>${p}</small></span><span class="flecha">›</span></button>`;
   }
   function pedirPass(u) {
-    hoja(`<h3>Hola, ${esc(nom1(u))}</h3><p style="color:var(--ink2);margin:6px 0 0">Ingresá tu contraseña (demo: 1234)</p>
+    hoja(`<h3>Hola, ${esc(nom1(u))}</h3><p style="color:var(--ink2);margin:6px 0 0">Ingresá tu contraseña${C.usr[u].rol === 'admin' ? '' : ' (inicial: 1234)'}</p>
       <div class="pass"><input id="pw" type="password" inputmode="numeric" placeholder="Contraseña"><button class="btn mini" id="okpw">Ingresar</button></div><div id="pwerr" style="color:var(--crit);font-size:13px;margin-top:8px"></div>`, v => {
       const go = () => {
-        if (v.querySelector('#pw').value !== '1234') { v.querySelector('#pwerr').textContent = 'Contraseña incorrecta'; return; }
+        if (v.querySelector('#pw').value !== (C.usr[u].clave || '1234')) { v.querySelector('#pwerr').textContent = 'Contraseña incorrecta'; return; }
         S.yo = u; const r = C.usr[u].rol;
         S.ver = r === 'alumno' ? u : (alumnosVisibles()[0] || {}).usuario; S.tab = r === 'alumno' ? 'inicio' : 'clase'; S.subC = 'hoy'; S.grupoSel = null; S.claseSel = null;
         guardar(); v.remove(); render();
@@ -4297,9 +4334,9 @@ window.QRGEN = qrcode;
     if (!tabs.includes(S.tab)) S.tab = tabs[esProfe() ? 1 : 0];
     const pend = DB.pendientes();
     let h = `<header class="top"><div class="fila"><div class="marca-top"><span class="mini-logo">${MARCA.icono('corredor', { tam: 26, bg: '#2A2B30' })}</span><div class="titulo">${TITULO[S.tab]}</div></div>
-      ${esProfe() && LOCAL && NB && NB.conectado() ? chipNube() : esProfe() && LOCAL ? chipCopia() : !esProfe() && modoAlumno() ? `<button class="sync" id="btnActAlu"><b></b>${cargaAlumno ? 'Actualizando…' : 'Act. ' + fHora(DB.local.meta.alumno.generado)}</button>` : esProfe() ? `<button class="sync ${pend ? 'pend' : ''}" id="btnSync"><b></b>${pend ? pend + ' por enviar' : 'Sincronizado'}</button>` : `<span class="sync" title="Tu profesor carga las clases; vos las ves acá">Solo lectura</span>`}
+      ${supervisa() ? `<button class="sync ${errorSup ? 'pend' : ''}" id="btnSup"><b></b>${cargaSup ? 'Actualizando…' : 'Solo lectura · ' + fHora(DB.local.meta.supervisor.generado)}</button>` : esProfe() && LOCAL && NB && NB.conectado() ? chipNube() : esProfe() && LOCAL ? chipCopia() : !esProfe() && modoAlumno() ? `<button class="sync" id="btnActAlu"><b></b>${cargaAlumno ? 'Actualizando…' : 'Act. ' + fHora(DB.local.meta.alumno.generado)}</button>` : esProfe() ? `<button class="sync ${pend ? 'pend' : ''}" id="btnSync"><b></b>${pend ? pend + ' por enviar' : 'Sincronizado'}</button>` : `<span class="sync" title="Tu profesor carga las clases; vos las ves acá">Solo lectura</span>`}
       <button class="avatar" id="btnYo" aria-label="Perfil">${ini(yo().nombre)}</button></div>
-      <div class="info" id="infoLinea">MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${esProfe() && LOCAL && NB && NB.conectado() ? lineaNube() : esProfe() && LOCAL ? lineaCopia() : modoAlumno() ? 'datos de ' + esc(DB.local.meta.alumno.profesor || 'tu profesor') : esProfe() ? (pend ? pend + ' cambios por enviar' : DB.ultimaSync ? 'act. ' + DB.ultimaSync : 'sin cambios pendientes') : 'datos de tu profesor'}</div>`;
+      <div class="info" id="infoLinea">MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${supervisa() ? (errorSup || 'supervisión de los datos reales · subidos ' + fHora(DB.local.meta.supervisor.generado)) : esProfe() && LOCAL && NB && NB.conectado() ? lineaNube() : esProfe() && LOCAL ? lineaCopia() : modoAlumno() ? 'datos de ' + esc(DB.local.meta.alumno.profesor || 'tu profesor') : esProfe() ? (pend ? pend + ' cambios por enviar' : DB.ultimaSync ? 'act. ' + DB.ultimaSync : 'sin cambios pendientes') : 'datos de tu profesor'}</div>`;
     if (esProfe() && (S.tab === 'progreso' || S.tab === 'musculos')) {
       h += `<div class="viendo">Alumno <select id="selVer">${porGrupoHabitual(alumnosVisibles()).map(([n, us, g]) => `<optgroup label="${g ? 'Clase ' + esc(n) : esc(n)}">${us.map(u => `<option value="${u.usuario}" ${u.usuario === S.ver ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</optgroup>`).join('')}</select></div>`;
     }
@@ -4308,7 +4345,7 @@ window.QRGEN = qrcode;
     if (S.tab === 'progreso' && esProfe()) subs = subs.concat([['historial', 'Historial']]);
     if (S.tab === 'rutinas' && !esAdmin() && C.USUARIOS.filter(u => u.rol === 'profesor' && u.activo).length < 2) { subs = subs.filter(x => x[0] !== 'compartidas'); if (S.subR === 'compartidas') S.subR = 'mis'; }
     if (subs) { const cur = S[subDe(S.tab)]; h += `<div class="subtabs">${subs.map(([k, t]) => `<button data-sub="${k}" class="${cur === k ? 'on' : ''}">${t}</button>`).join('')}</div>`; }
-    if (LOCAL && esProfe() && !(NB && NB.conectado()) && avisoCopia()) h += `<div class="aviso-copia"><span>${avisoCopia()}</span><button data-copia>Hacer copia</button></div>`;
+    if (LOCAL && esProfe() && !(NB && NB.conectado()) && !supervisa() && avisoCopia()) h += `<div class="aviso-copia"><span>${avisoCopia()}</span><button data-copia>Hacer copia</button></div>`;
     h += `</header><main id="main"></main>
       <nav class="tabs">${tabs.map(t => `<button data-tab="${t}" class="${S.tab === t ? 'on' : ''}" aria-label="${NOMTAB[t]}">${ICON[t]}<span>${NOMTAB[t]}</span></button>`).join('')}</nav>`;
     document.getElementById('app').innerHTML = h;
@@ -4333,10 +4370,13 @@ window.QRGEN = qrcode;
       <div class="card" style="margin:0 0 12px"><div class="fila-kv"><span>Última copia</span><b>${u ? fLarga(u.slice(0, 10)) + ' ' + u.slice(11, 16) : 'Nunca'}</b></div><div class="fila-kv"><span>Cambios sin copia</span><b>${c}</b></div><div class="fila-kv"><span>Espacio usado</span><b id="espUso">calculando…</b></div><div class="fila-kv"><span>Versión</span><b>${VERSION}</b></div></div>
       <button class="btn" id="cpExp">Exportar copia</button><div style="height:8px"></div>
       <button class="btn out" id="cpImp">Restaurar una copia</button><input type="file" id="cpFile" accept=".json,application/json" style="display:none">
-      ${adm && NB ? seccionNube() : ''}
-      ${adm && !(NB && NB.conectado()) ? `<div class="grp" style="margin-top:20px">Datos de prueba</div>
+      ${NB && esAdmin() && !NB.conectado() ? seccionSupervision() : adm && NB && !supervisa() ? seccionNube() : ''}
+      ${adm && !(NB && NB.conectado()) && !supervisa() ? `<div class="grp" style="margin-top:20px">Datos de prueba</div>
       ${DB.local.meta.sinDemo ? '<div class="sub">Ya estás usando tus propios alumnos.</div>' : `<div class="sub" style="margin-bottom:8px">La app arrancó con 8 alumnos y 3 meses de historia de prueba. Quitalos para empezar con tus alumnos reales: quedan los ejercicios, las rutinas y las clases (sin alumnos).</div><button class="btn out" id="cpSinDemo">Quitar alumnos de prueba</button>`}
       <div style="height:8px"></div><button class="btn gris" id="cpReset">Borrar todo y volver a los datos de prueba</button>` : ''}`, v => {
+      const sv1 = v.querySelector('#svVer'); if (sv1) sv1.onclick = () => { v.remove(); hojaSupervisar(); };
+      const sv2 = v.querySelector('#svAct'); if (sv2) sv2.onclick = () => { v.remove(); actualizarSupervision().then(ok => toast(ok ? 'Datos actualizados' : errorSup)); render(); };
+      const sv3 = v.querySelector('#svFin'); if (sv3) sv3.onclick = () => { if (!confirm('¿Dejar de supervisar? Se borran de este celular los datos reales (siguen en GitHub y en el celular del profesor) y vuelven los datos de prueba.')) return; NB.dejarDeSupervisar().then(() => { v.remove(); borradores = {}; S.claseSel = null; guardar(); render(); toast('Volviste a los datos de prueba'); }); };
       const nc = v.querySelector('#nbCon'); if (nc) nc.onclick = () => { v.remove(); conectarNube(); };
       const ne = v.querySelector('#nbEnv'); if (ne) ne.onclick = () => { v.remove(); NB.enviar().then(() => toast(NB.estado === 'ok' ? 'Datos enviados a GitHub' : NB.error)); };
       const nk = v.querySelector('#nbClave'); if (nk) nk.onclick = () => { v.remove(); mostrarClave(DB.local.meta.github.clave, false); };
@@ -4349,6 +4389,10 @@ window.QRGEN = qrcode;
       const sd = v.querySelector('#cpSinDemo'); if (sd) sd.onclick = () => { if (!confirm('¿Quitar los 8 alumnos de prueba y toda su historia? Te conviene exportar una copia antes. Esta acción no se puede deshacer.')) return; borradores = {}; sesInicio = null; DB.quitarDemo(S.yo).then(() => { v.remove(); S.claseSel = null; guardar(); render(); toast('Listo: cargá tus alumnos en Clases y alumnos'); }); };
       const rs = v.querySelector('#cpReset'); if (rs) rs.onclick = () => { if (!confirm('¿Borrar todo lo cargado en este dispositivo y volver a los datos de prueba? Esta acción no se puede deshacer.')) return; borradores = {}; sesInicio = null; DB.reiniciarDemo().then(() => { v.remove(); S.claseSel = null; guardar(); render(); toast('Datos de prueba restablecidos'); }); };
     });
+  }
+  function seccionSupervision() {
+    if (supervisa()) { const sv = DB.local.meta.supervisor; return `<div class="grp" style="margin-top:20px">Supervisión (solo lectura)</div><div class="card" style="margin:0 0 10px"><div class="fila-kv"><span>Datos subidos por el profesor</span><b>${fHora(sv.generado)}</b></div><div class="fila-kv"><span>Bajados a este celular</span><b>${fHora(sv.bajado)}</b></div></div><button class="btn" id="svAct">Actualizar ahora</button><div style="height:8px"></div><button class="btn gris" id="svFin">Dejar de supervisar (volver a datos de prueba)</button>`; }
+    return `<div class="grp" style="margin-top:20px">Datos reales del profesor</div><div class="sub" style="margin-bottom:8px">Como administrador podés ver en este celular, en solo lectura, todo lo que el profesor subió a GitHub. Necesitás su clave de recuperación.</div><button class="btn" id="svVer">Ver datos reales (solo lectura)</button>`;
   }
   function seccionNube() {
     if (!NB.conectado()) return `<div class="grp" style="margin-top:20px">GitHub</div><div class="sub" style="margin-bottom:8px">Conectá este celular con tu repositorio para guardar todo cifrado en GitHub y darles acceso a tus alumnos con un link o QR.</div><button class="btn" id="nbCon">Conectar con GitHub</button>`;
@@ -4397,6 +4441,7 @@ window.QRGEN = qrcode;
   /* acceso del alumno: link + QR con su clave */
   function hojaAcceso(u) {
     const al = C.usr[u]; if (!al) return;
+    if (supervisa()) { const a0 = NB.accesos()[u]; if (!a0) return toast('Este alumno todavía no tiene acceso'); const lk = NB.linkAlumno(a0), q = window.QRGEN(0, 'M'); q.addData(lk); q.make(); return hoja(`<div class="tag">Acceso del alumno · solo lectura</div><h3>${esc(al.nombre)}</h3><div class="qr-box">${q.createSvgTag({ cellSize: 4, margin: 2, scalable: true })}</div><div class="sub" style="text-align:center;margin:10px 0">Podés escanearlo con otro celular para probar lo que ve el alumno. Renovarlo lo hace el profesor.</div>`); }
     if (!NB || !NB.conectado()) return hoja(`<h3>Acceso de ${esc(nom1(u))}</h3><div class="sub" style="margin:4px 0 12px">Para que tus alumnos vean su progreso en su celular, primero conectá este celular con GitHub.</div><button class="btn" id="acCon">Conectar con GitHub</button>`, v => { v.querySelector('#acCon').onclick = () => { v.remove(); conectarNube(); }; });
     let a = NB.accesos()[u];
     const pinta = v => {
@@ -4435,6 +4480,7 @@ window.QRGEN = qrcode;
     r.readAsText(f);
   }
   function refrescarSync() {
+    if (supervisa()) { const b = $('#btnSup'); if (b) b.outerHTML = `<button class="sync ${errorSup ? 'pend' : ''}" id="btnSup"><b></b>${cargaSup ? 'Actualizando…' : 'Solo lectura · ' + fHora(DB.local.meta.supervisor.generado)}</button>`; const il = $('#infoLinea'); if (il) il.textContent = `MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${errorSup || 'supervisión de los datos reales'}`; return; }
     if (LOCAL && NB && NB.conectado()) { const b = $('#btnNube'); if (b) b.outerHTML = chipNube(); const il = $('#infoLinea'); if (il) il.textContent = `MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${lineaNube()}`; return; }
     if (LOCAL) { const b = $('#btnCopia'); if (b) b.outerHTML = chipCopia(); const il = $('#infoLinea'); if (il) il.textContent = `MADEBE INTEGRAL · Info al ${fCorta(U.hoy())} | ${lineaCopia()}`; return; }
     const b = $('#btnSync'); if (!b) return; const pend = DB.pendientes();
@@ -5207,6 +5253,7 @@ window.QRGEN = qrcode;
     if (d.verMus !== undefined) { S.musSel = d.verMus || null; S.subM = 'mapa'; render(); return; }
     if (t.id === 'btnSync') return sincronizar();
     if (t.id === 'btnCopia' || d.copia !== undefined || t.id === 'btnNube') { if (t.id === 'btnNube' && NB.pendientes() && !NB.enviando) { NB.enviar().then(() => toast(NB.estado === 'ok' ? 'Datos enviados a GitHub' : NB.error)); refrescarSync(); return; } return hojaCopia(); }
+    if (t.id === 'btnSup') { actualizarSupervision().then(ok => toast(ok ? 'Datos actualizados' : errorSup)); refrescarSync(); return; }
     if (t.id === 'btnActAlu') { iniciarAlumno(DB.local.meta.alumno).then(ok => { render(); toast(ok ? 'Datos actualizados' : errorAlumno); }); render(); return; }
     if (d.accesoAlumno) return setTimeout(() => hojaAcceso(d.accesoAlumno), 50);
     if (t.id === 'btnYo') return hoja(`<div style="width:150px;margin:2px 0 14px">${MARCA.logo({ fg: '#1E2125', bg: '#F4F5F7' })}</div><h3>${esc(yo().nombre)}</h3><div style="color:var(--ink2);margin:4px 0 16px">${{ admin: 'Administrador', profesor: 'Profesor', alumno: 'Alumno' }[yo().rol]}</div>
@@ -5291,6 +5338,7 @@ window.QRGEN = qrcode;
     if (fr && NB.conectado()) setTimeout(() => toast('Este es el celular del profesor: el link de alumno no se aplica acá'), 1200);
     else if (fr) iniciarAlumno(fr);
     else if (NB.esAlumno()) iniciarAlumno(DB.local.meta.alumno);
+    else if (NB.supervisando()) actualizarSupervision();
     if (NB.conectado() && NB.pendientes()) NB.programar(5000);
   }
   G.initTooltip();
